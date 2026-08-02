@@ -55,6 +55,45 @@ async function askPhoneNumber() {
   }
 }
 
+
+function isGroupJid(jid = '') {
+  return typeof jid === 'string' && jid.endsWith('@g.us')
+}
+
+function isPhoneJid(jid = '') {
+  return typeof jid === 'string' && jid.endsWith('@s.whatsapp.net')
+}
+
+function resolveChatJid(msg) {
+  const key = msg?.key || {}
+  const remote = key.remoteJid || ''
+
+  // Los grupos deben conservar siempre su JID @g.us.
+  if (isGroupJid(remote)) return remote
+
+  // En chats privados con direccionamiento LID, Baileys suele incluir
+  // el JID telefónico equivalente en remoteJidAlt/participantAlt.
+  const candidates = [
+    key.remoteJidAlt,
+    key.participantAlt,
+    key.participant,
+    remote
+  ]
+
+  return candidates.find(isPhoneJid) || remote
+}
+
+function resolveSenderJid(msg) {
+  const key = msg?.key || {}
+  const candidates = [
+    key.participantAlt,
+    key.participant,
+    key.remoteJidAlt,
+    key.remoteJid
+  ]
+  return jidNormalizedUser(candidates.find(isPhoneJid) || candidates.find(Boolean) || '')
+}
+
 function formatPairingCode(code = '') {
   return code.match(/.{1,4}/g)?.join('-') || code
 }
@@ -94,7 +133,7 @@ async function startNeroBot() {
     connectTimeoutMs: 60_000,
     defaultQueryTimeoutMs: undefined,
     keepAliveIntervalMs: 10_000,
-    browser: ['Nero Bot', 'Chrome', '1.4.0'],
+    browser: ['Nero Bot', 'Chrome', '1.4.4'],
     getMessage: async () => undefined
   })
 
@@ -158,8 +197,19 @@ async function startNeroBot() {
       try {
         if (!msg.message || msg.key.remoteJid === 'status@broadcast') continue
 
-        const chat = msg.key.remoteJid
-        const sender = jidNormalizedUser(msg.key.participant || msg.key.remoteJid)
+        const chat = resolveChatJid(msg)
+        const sender = resolveSenderJid(msg)
+
+        if (msg.key.remoteJid?.endsWith('@lid')) {
+          console.log('[JID] Mensaje privado con LID:', {
+            remoteJid: msg.key.remoteJid,
+            remoteJidAlt: msg.key.remoteJidAlt,
+            participant: msg.key.participant,
+            participantAlt: msg.key.participantAlt,
+            resolvedChat: chat,
+            resolvedSender: sender
+          })
+        }
         const text = extractText(msg.message)
 
         const wasModerated = await moderateIncoming({ sock, msg, chat, sender, isOwner: isOwner(sender), isSubOwner: isSubOwner(sender) })
@@ -186,7 +236,7 @@ async function startNeroBot() {
         })
       } catch (error) {
         console.error('Error procesando mensaje:', error)
-        const chat = msg.key.remoteJid
+        const chat = resolveChatJid(msg)
         if (chat) {
           await sock.sendMessage(chat, { text: '❌ Ocurrió un error al ejecutar el comando.' }, { quoted: msg }).catch(() => {})
         }

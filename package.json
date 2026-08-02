@@ -1,6 +1,6 @@
 {
   "name": "nero-bot",
-  "version": "1.4.3",
+  "version": "1.4.4",
   "description": "Nero Bot v1.4.3: diagnóstico controlado de carruseles con seis variantes y logs JSON",
   "type": "module",
   "main": "src/index.js",
