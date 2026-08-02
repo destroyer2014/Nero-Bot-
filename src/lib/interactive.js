@@ -1,9 +1,9 @@
-import { generateWAMessageFromContent, proto } from '@whiskeysockets/baileys'
+import { generateWAMessageFromContent, prepareWAMessageMedia, proto } from '@whiskeysockets/baileys'
 
 export async function sendInteractive(sock, chat, { title = '', body = '', footer = 'Nero Bot', media = null, buttons = [] }, quoted) {
   let header = proto.Message.InteractiveMessage.Header.create({ title, hasMediaAttachment: false })
   if (media?.image) {
-    const prepared = await sock.prepareWAMessageMedia({ image: media.image }, { upload: sock.waUploadToServer })
+    const prepared = await prepareWAMessageMedia({ image: media.image }, { upload: sock.waUploadToServer })
     header = proto.Message.InteractiveMessage.Header.create({
       title,
       hasMediaAttachment: true,
