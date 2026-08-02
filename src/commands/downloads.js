@@ -4,12 +4,48 @@ import { sendInteractive, sendCarousel, copyButton, quickReply, singleSelect, ur
 import { formatBytes, formatDuration, isLikelyUrl, pickDownloadUrl, sendImageAlbum, sendRemoteMedia } from '../lib/media.js'
 import { cancelUserJobs, clearWaitingQueues, formatQueueStatus, runDownloadJob } from '../lib/downloadQueue.js'
 import { getSelection, saveSelection } from '../lib/selectionCache.js'
+import sharp from 'sharp'
 
 const usage = (name, value) => `Uso: *${config.prefix}${name} ${value}*`
 const queryText = args => args.join(' ').trim()
 const youtubeUrl = id => `https://www.youtube.com/watch?v=${id}`
 const musicUrl = id => `https://music.youtube.com/watch?v=${id}`
 const spotifyTrackUrl = id => `https://open.spotify.com/track/${id}`
+
+async function fetchImageBuffer(url, timeoutMs = 20000) {
+  if (!url) throw new Error('Portada no disponible.')
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), timeoutMs)
+  try {
+    const response = await fetch(url, {
+      signal: controller.signal,
+      redirect: 'follow',
+      headers: { 'user-agent': 'Mozilla/5.0', accept: 'image/avif,image/webp,image/apng,image/*,*/*;q=0.8' }
+    })
+    if (!response.ok) throw new Error(`Portada HTTP ${response.status}`)
+    const contentType = response.headers.get('content-type') || ''
+    if (!contentType.startsWith('image/')) throw new Error('La portada no es una imagen.')
+    const source = Buffer.from(await response.arrayBuffer())
+    if (!source.length) throw new Error('Portada vacía.')
+    return sharp(source).rotate().resize(640, 640, { fit: 'cover' }).jpeg({ quality: 86 }).toBuffer()
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
+let fallbackTikTokCover
+async function getFallbackTikTokCover() {
+  if (!fallbackTikTokCover) {
+    fallbackTikTokCover = await sharp({
+      create: { width: 640, height: 640, channels: 3, background: { r: 20, g: 20, b: 24 } }
+    }).composite([{
+      input: Buffer.from(`<svg width="640" height="640" xmlns="http://www.w3.org/2000/svg"><rect width="640" height="640" fill="#141418"/><text x="320" y="285" text-anchor="middle" fill="#ffffff" font-size="70" font-family="sans-serif" font-weight="700">TikTok</text><text x="320" y="365" text-anchor="middle" fill="#bbbbc4" font-size="34" font-family="sans-serif">Nero Bot</text></svg>`),
+      top: 0,
+      left: 0
+    }]).jpeg({ quality: 90 }).toBuffer()
+  }
+  return fallbackTikTokCover
+}
 
 async function react(sock, msg, emoji) {
   await sock.sendMessage(msg.key.remoteJid, { react: { text: emoji, key: msg.key } }).catch(() => {})
@@ -164,9 +200,55 @@ export const stickerSearch={name:'stickersearch',aliases:['stickerssearch','stic
   else await ctx.sock.sendMessage(ctx.chat,{text:caption},{quoted:ctx.msg})
 })}}
 
-export const tiktok={name:'tiktok',aliases:['tt'],async execute(ctx){return apiTask(ctx,async()=>{const url=ctx.args[0];if(!isLikelyUrl(url))throw new Error(usage('tiktok','<enlace>'));await runDownloadJob(ctx,'heavy','.tiktok',async()=>{const response=await evoGet('/dl/tiktok',{url},{timeoutMs:180000});const d=response.data||{};if(!d.dl)throw new Error('TikTok no entregó el video.');const author=d.author?.nickname||d.author?.unique_id||'TikTok';await sendRemoteMedia(ctx.sock,ctx.chat,{type:'video',url:d.dl,download_url:d.dl,mime_type:'video/mp4',filename:`TikTok-${d.id||Date.now()}.mp4`},{quoted:ctx.msg,caption:[`🎵 *${d.title||'TikTok'}*`,`👤 ${author}`,`⏱️ ${d.duration||'No disponible'}`,`🌎 ${d.region||'--'}`,d.stats?`▶️ ${d.stats.plays||0}  ❤️ ${d.stats.likes||0}  💬 ${d.stats.comments||0}`:''].filter(Boolean).join('\n')})})})}}
+export const tiktok={name:'tiktok',aliases:['tt'],async execute(ctx){return apiTask(ctx,async()=>{const url=ctx.args[0];if(!isLikelyUrl(url))throw new Error(usage('tiktok','<enlace>'));await runDownloadJob(ctx,'heavy','.tiktok',async()=>{const response=await evoGet('/dl/tiktok',{url},{timeoutMs:180000});const d=response.data||{};if(!d.dl)throw new Error('TikTok no entregó contenido descargable.');const author=d.author?.nickname||d.author?.unique_id||'TikTok';const caption=[`${d.type==='image'?'🖼️':'🎵'} *${d.title||'TikTok'}*`,`👤 ${author}${d.author?.unique_id?` (@${d.author.unique_id})`:''}`,d.type==='image'&&Array.isArray(d.dl)?`📷 Fotos: ${d.dl.length}`:`⏱️ ${d.duration||'No disponible'}`,`🌎 ${d.region||'--'}`,d.stats?`▶️ ${d.stats.plays||0}  ❤️ ${d.stats.likes||0}  💬 ${d.stats.comments||0}`:''].filter(Boolean).join('\n');if(d.type==='image'&&Array.isArray(d.dl)){const items=d.dl.map((image,index)=>({type:'image',download_url:image,title:`TikTok foto ${index+1}`}));await sendImageAlbum(ctx.sock,ctx.chat,items,{quoted:ctx.msg,caption});return}const videoUrl=Array.isArray(d.dl)?d.dl[0]:d.dl;if(!videoUrl)throw new Error('TikTok no entregó el video.');await sendRemoteMedia(ctx.sock,ctx.chat,{type:'video',url:videoUrl,download_url:videoUrl,mime_type:'video/mp4',filename:`TikTok-${d.id||Date.now()}.mp4`},{quoted:ctx.msg,caption})})})}}
 
-export const tiktokSearch={name:'tiktoksearch',aliases:['ttsearch'],async execute(ctx){return apiTask(ctx,async()=>{const input=queryText(ctx.args);if(!input)throw new Error(usage('tiktoksearch','<búsqueda>'));const response=await evoGet('/search/tiktok',{query:input});const list=(response.data||[]).slice(0,10);if(!list.length)throw new Error('No encontré resultados en TikTok.');const cards=list.map((item,index)=>{const username=item.author?.unique_id||'usuario';const original=`https://www.tiktok.com/@${username}/video/${item.id}`;const command=`${config.prefix}tiktok ${original}`;const stats=item.stats||{};return{title:`TikTok • Resultado ${index+1}`,image:item.cover?{url:item.cover}:null,body:[`*Título:* ${(item.title||'Sin título').slice(0,180)}`,`*Duración:* ${item.duration||'--'}`,`*Autor:* @${username}`,`*Likes:* ${stats.likes||0}`,`*Comentarios:* ${stats.comments||0}`,`*Shares:* ${stats.shares||0}`,`*Reproducciones:* ${stats.views||0}`].join('\n'),buttons:[copyButton('Copy',command),urlButton('Abrir TikTok',original)]}});await sendCarousel(ctx.sock,ctx.chat,{body:`🎵 *TikTok Buscador*\nResultados para: *${input}*`,cards},ctx.msg)})}}
+export const tiktokSearch={name:'tiktoksearch',aliases:['ttsearch'],async execute(ctx){return apiTask(ctx,async()=>{
+  const input=queryText(ctx.args)
+  if(!input)throw new Error(usage('tiktoksearch','<búsqueda>'))
+  const response=await evoGet('/search/tiktok',{query:input})
+  const list=(response.data||[]).slice(0,10)
+  if(!list.length)throw new Error('No encontré resultados en TikTok.')
+
+  const cards=[]
+  for(const [index,item] of list.entries()){
+    const username=item.author?.unique_id||'usuario'
+    const original=`https://www.tiktok.com/@${username}/video/${item.id}`
+    const command=`${config.prefix}tiktok ${original}`
+    const stats=item.stats||{}
+    let cover
+    try{cover=await fetchImageBuffer(item.cover)}catch(error){
+      console.warn(`TikTok Search: portada ${index+1} inválida:`,error?.message||error)
+      cover=await getFallbackTikTokCover()
+    }
+    cards.push({
+      title:`TikTok • Resultado ${index+1}`,
+      image:cover,
+      body:[
+        `*Título:* ${(item.title||'Sin título').slice(0,180)}`,
+        `*Duración:* ${item.duration||'--'}`,
+        `*Autor:* @${username}`,
+        `*Likes:* ${stats.likes||0}`,
+        `*Comentarios:* ${stats.comments||0}`,
+        `*Shares:* ${stats.shares||0}`,
+        `*Reproducciones:* ${stats.views||0}`
+      ].join('\n'),
+      buttons:[copyButton('Copiar comando',command),urlButton('Abrir TikTok',original)]
+    })
+  }
+
+  try{
+    await sendCarousel(ctx.sock,ctx.chat,{body:`🎵 *TikTok Buscador*\nResultados para: *${input}*`,cards},ctx.msg)
+  }catch(error){
+    console.error('TikTok Search: carrusel rechazado:',error)
+    const lines=list.slice(0,10).map((item,index)=>{
+      const username=item.author?.unique_id||'usuario'
+      const original=`https://www.tiktok.com/@${username}/video/${item.id}`
+      return `${index+1}. *${(item.title||'Sin título').slice(0,90)}*\n@${username} • ${item.duration||'--'}\n${config.prefix}tiktok ${original}`
+    }).join('\n\n')
+    await ctx.sock.sendMessage(ctx.chat,{text:`🎵 *TikTok Buscador*\nResultados para: *${input}*\n\n${lines}\n\n⚠️ WhatsApp rechazó el carrusel; envié una lista compatible.`},{quoted:ctx.msg})
+  }
+})}}
+
 
 export const terabox={name:'terabox',aliases:['tb'],async execute(ctx){return apiTask(ctx,async()=>{const url=ctx.args[0];if(!isLikelyUrl(url))throw new Error(usage('terabox','<enlace>'));const d=await apiGet('/terabox',{url,limit:50});const files=d.files||[];if(!files.length)throw new Error('No encontré archivos en TeraBox.');const token=saveSelection('terabox',files);const rows=files.slice(0,10).map((f,i)=>({header:'Archivo',title:f.file_name.slice(0,90),description:formatBytes(f.size_bytes),id:`${config.prefix}teraboxpick ${token} ${i}`}));await sendInteractive(ctx.sock,ctx.chat,{title:'TeraBox Downloader',body:`Se encontraron ${files.length} archivo(s).`,media:files[0].thumb?{image:{url:files[0].thumb}}:null,buttons:[singleSelect('Seleccionar',[{title:'Archivos',rows}])]},ctx.msg)})}}
 export const teraboxpick={name:'teraboxpick',aliases:[],async execute(ctx){return apiTask(ctx,async()=>{const list=getSelection(ctx.args[0],'terabox');const f=list?.[Number(ctx.args[1])];if(!f)throw new Error('La selección venció.');await runDownloadJob(ctx,'heavy','.terabox',()=>sendRemoteMedia(ctx.sock,ctx.chat,{...f,type:'file',filename:f.file_name,url:f.download_url_full},{quoted:ctx.msg,caption:`TeraBox • ${f.file_name}`,forceDocument:true}))})}}

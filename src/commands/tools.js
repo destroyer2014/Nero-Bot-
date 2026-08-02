@@ -13,7 +13,26 @@ async function multipartEvo(endpoint,buffer,filename='archivo.bin',field='file',
  const key=requireEvoGbApiKey();const base=process.env.EVOGB_API_BASE_URL||'https://api.evogb.org';const url=new URL(endpoint,base);url.searchParams.set('key',key)
  for(const [name,value] of Object.entries(params)){if(value!==undefined&&value!==null&&value!=='')url.searchParams.set(name,String(value))}
  const form=new FormData();form.append(field,new Blob([buffer]),filename)
- const r=await fetch(url,{method:'POST',body:form});const data=await r.json().catch(()=>({status:false,message:`HTTP ${r.status}`}));if(!r.ok||data.status===false)throw new Error(data.message||data.error||`HTTP ${r.status}`);return data
+ const r=await fetch(url,{method:'POST',body:form})
+ const contentType=(r.headers.get('content-type')||'').toLowerCase()
+ if(contentType.startsWith('image/')||contentType.startsWith('video/')||contentType.startsWith('audio/')){
+   if(!r.ok)throw new Error(`HTTP ${r.status}`)
+   return {binary:Buffer.from(await r.arrayBuffer()),contentType}
+ }
+ const raw=await r.text();let data
+ try{data=JSON.parse(raw)}catch{data={status:false,message:raw.slice(0,300)||`HTTP ${r.status}`}}
+ if(!r.ok||data.status===false)throw new Error(data.message||data.error||`HTTP ${r.status}`);return data
+}
+async function evoBinaryGet(endpoint,params={}){
+ const key=requireEvoGbApiKey();const base=process.env.EVOGB_API_BASE_URL||'https://api.evogb.org';const url=new URL(endpoint,base);url.searchParams.set('key',key)
+ for(const [name,value] of Object.entries(params)){if(value!==undefined&&value!==null&&value!=='')url.searchParams.set(name,String(value))}
+ const r=await fetch(url,{headers:{accept:'image/*,application/json;q=0.8'}})
+ const type=(r.headers.get('content-type')||'').toLowerCase()
+ if(type.startsWith('image/')){if(!r.ok)throw new Error(`HTTP ${r.status}`);return {binary:Buffer.from(await r.arrayBuffer()),contentType:type}}
+ const raw=await r.text();let data
+ try{data=JSON.parse(raw)}catch{throw new Error(raw.slice(0,300)||`HTTP ${r.status}`)}
+ if(!r.ok||data.status===false)throw new Error(data.message||data.error||`HTTP ${r.status}`)
+ return data
 }
 const wrap=(name,aliases,fn)=>({name,aliases,async execute(ctx){try{await fn(ctx)}catch(e){await sendJsonError(ctx,e)}}})
 
@@ -27,7 +46,7 @@ export const textsticker=wrap('textosticker',['textsticker'],async ctx=>{const t
 export const ytthumb=wrap('ytthumb',['thumbnail'],async ctx=>{const url=q(ctx);if(!isLikelyUrl(url))throw new Error(usage('ytthumb','<url de YouTube>'));const d=await apiGet('/tools/youtube-thumbnail',{mode:'link',url,quality:'auto'});await sendRemoteMedia(ctx.sock,ctx.chat,d,{quoted:ctx.msg,caption:`🖼️ Miniatura • ${d.quality||'auto'}`})})
 export const checkhost=wrap('checkhost',['host'],async ctx=>{const host=q(ctx);if(!host)throw new Error(usage('checkhost','<dominio>'));const d=await apiGet('/tools/checkhost',{host});const a=d.result?.data?.Answer||[];await ctx.sock.sendMessage(ctx.chat,{text:`🌐 *Verificación de host*\nHost: ${host}\nServicio: ${d.result?.service||'?'}\nIP: ${a.map(x=>x.data).join(', ')||'Sin respuesta'}\nTTL: ${a[0]?.TTL||'?'}`},{quoted:ctx.msg})})
 export const country=wrap('pais',['country'],async ctx=>{const name=q(ctx);if(!name)throw new Error(usage('pais','<nombre>'));const d=await evoGet('/tools/country',{name,mode:'completa'});const x=d.data;const cap=x.capitals?.[0]?.name||'?';const currencies=(x.currencies||[]).map(c=>`${c.name} (${c.code})`).join(', ');const langs=(x.languages||[]).map(l=>l.native_name||l.name).join(', ');const text=`${x.flag?.emoji||'🌍'} *${x.names?.translations?.spa?.common||x.names?.common}*\nCapital: ${cap}\nRegión: ${x.region} / ${x.subregion}\nPoblación: ${Number(x.population||0).toLocaleString('es-PE')}\nÁrea: ${Number(x.area?.kilometers||0).toLocaleString('es-PE')} km²\nMoneda: ${currencies}\nIdiomas: ${langs}\nCódigo: +${(x.calling_codes||[]).join(', +')}\nZona: ${(x.timezones||[]).join(', ')}`;await ctx.sock.sendMessage(ctx.chat,{image:{url:x.flag?.url_png},caption:text},{quoted:ctx.msg})})
-export const ssweb=wrap('ssweb',['screenshotweb'],async ctx=>{const url=q(ctx);if(!isLikelyUrl(url))throw new Error(usage('ssweb','<url>'));const d=await evoGet('/tools/ssweb',{url,device:'pc'});const out=d.data?.url||d.data?.image||d.result||d.url;if(!out)throw new Error('La API no entregó la captura.');await ctx.sock.sendMessage(ctx.chat,{image:{url:out},caption:'📸 Captura web'},{quoted:ctx.msg})})
+export const ssweb=wrap('ssweb',['screenshotweb'],async ctx=>{const url=q(ctx);if(!isLikelyUrl(url))throw new Error(usage('ssweb','<url>'));const d=await evoBinaryGet('/tools/ssweb',{url,device:'pc'});if(d.binary)return ctx.sock.sendMessage(ctx.chat,{image:d.binary,caption:'📸 Captura web'},{quoted:ctx.msg});const out=d.data?.url||d.data?.image||d.result||d.url;if(!out)throw new Error('La API no entregó la captura.');await ctx.sock.sendMessage(ctx.chat,{image:{url:out},caption:'📸 Captura web'},{quoted:ctx.msg})})
 export const tempmail=wrap('tempmail',['correo'],async ctx=>{if(ctx.args[0]==='inbox'){const email=tempStore.get(ctx.sender);if(!email)throw new Error('Primero crea un correo con .tempmail');const d=await evoGet('/tools/tempmail-read',{email});const list=d.data||[];await ctx.sock.sendMessage(ctx.chat,{text:list.length?`📬 *Bandeja*\n\n${JSON.stringify(list,null,2).slice(0,3500)}`:`📭 Bandeja vacía\nCorreo: ${email}`},{quoted:ctx.msg});return}const d=await evoGet('/tools/tempmail');const email=d.data?.email;if(!email)throw new Error('No se pudo generar el correo.');tempStore.set(ctx.sender,email);await ctx.sock.sendMessage(ctx.chat,{text:`📩 *Correo temporal*\n\n${email}\n\nConsulta: .tempmail inbox`},{quoted:ctx.msg})})
 const tempStore=new Map()
 
@@ -54,14 +73,15 @@ async function enhanceImage(ctx,{scale=2}={}){
  if(!buffer)throw new Error(`Responde a una imagen con ${config.prefix}${scale>=4?'upscale':'hd'} o agrega una URL.`)
  await ctx.sock.sendMessage(ctx.chat,{text:`✨ Mejorando imagen en x${scale}...`},{quoted:ctx.msg})
  const d=await multipartEvo('/tools/upscale',buffer,'imagen.jpg','file',{scale})
+ if(d.binary)return ctx.sock.sendMessage(ctx.chat,{image:d.binary,caption:`✨ Imagen mejorada x${scale}`},{quoted:ctx.msg})
  const output=findMediaUrl(d?.data||d)
- if(!output)throw new Error('La API procesó la imagen, pero no entregó una URL de salida.')
+ if(!output)throw new Error('La API procesó la imagen, pero no entregó una imagen o URL de salida.')
  await ctx.sock.sendMessage(ctx.chat,{image:{url:output},caption:`✨ Imagen mejorada x${scale}`},{quoted:ctx.msg})
 }
 export const hd=wrap('hd',['remini'],ctx=>enhanceImage(ctx,{scale:2}))
 export const upscale=wrap('upscale',[],ctx=>enhanceImage(ctx,{scale:4}))
 export const compress=wrap('comprimir',['compress'],ctx=>imageTool(ctx,'/image/compress',{quality:Number(ctx.args[0])||80,max_width:1600,format:'jpg'}))
-export const restore=wrap('restaurar',['restore'],ctx=>imageTool(ctx,'/image/restore',{strength:'normal',scale:1,format:'auto'}))
+export const restore=wrap('restaurar',['restore'],async ctx=>{const url=ctx.args.find(isLikelyUrl);if(!url)throw new Error(`Por ahora *${config.prefix}restaurar* requiere una URL pública de imagen. Ejemplo: ${config.prefix}restaurar https://...`);return imageTool(ctx,'/image/restore',{strength:'normal',scale:1,format:'auto'})})
 export const convert=wrap('convertir',['imgconvert'],ctx=>{const format=ctx.args[0]||'png';return imageTool({...ctx,args:ctx.args.slice(1)},'/image/convert',{format,quality:92,max_width:1600})})
 
 export const ocr=wrap('ocr',['leertexto'],async ctx=>{const b=await mediaBuffer(ctx);if(!b)throw new Error('Responde a una imagen con .ocr');const d=await multipartEvo('/tools/ocr',b,'imagen.jpg');await ctx.sock.sendMessage(ctx.chat,{text:`📝 *Texto detectado*\n\n${d.result||'No se detectó texto.'}`},{quoted:ctx.msg})})

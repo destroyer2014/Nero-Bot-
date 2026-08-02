@@ -1,7 +1,7 @@
 {
   "name": "nero-bot",
-  "version": "1.3.3",
-  "description": "Nero Bot para WhatsApp con herramientas, descargas, moderación y stickers corregidos",
+  "version": "1.3.5",
+  "description": "Nero Bot para WhatsApp con herramientas, descargas, carrusel TikTok robusto y menú rediseñado",
   "type": "module",
   "main": "src/index.js",
   "scripts": {
