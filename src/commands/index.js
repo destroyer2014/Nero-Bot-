@@ -2,8 +2,10 @@ import { command as menu } from './menu.js'
 import { command as ping } from './ping.js'
 import { command as info } from './info.js'
 import { downloadCommands } from './downloads.js'
+import { toolCommands } from './tools.js'
+import { moderationCommands } from './moderation.js'
 
-const commands = [menu, ping, info, ...downloadCommands]
+const commands = [menu, ping, info, ...downloadCommands, ...toolCommands, ...moderationCommands]
 const commandMap = new Map()
 for (const command of commands) {
   commandMap.set(command.name, command)

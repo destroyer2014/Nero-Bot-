@@ -13,6 +13,7 @@ import config from '../config.js'
 import { extractText } from './lib/text.js'
 import { findCommand } from './commands/index.js'
 import { getPermissionLevel, isOwner, isStaff, isSubOwner } from './lib/permissions.js'
+import { moderateIncoming } from './lib/nsfwGuard.js'
 
 const logger = pino({ level: process.env.BAILEYS_LOG_LEVEL || 'silent' })
 const sessionPath = path.resolve('sessions', config.sessionName)
@@ -150,6 +151,8 @@ async function startNeroBot() {
         const sender = jidNormalizedUser(msg.key.participant || msg.key.remoteJid)
         const text = extractText(msg.message)
 
+        const wasModerated = await moderateIncoming({ sock, msg, chat, sender, isOwner: isOwner(sender), isSubOwner: isSubOwner(sender) })
+        if (wasModerated) continue
         if (!text.startsWith(config.prefix)) continue
 
         const [rawCommand, ...args] = text.slice(config.prefix.length).trim().split(/\s+/)
