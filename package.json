@@ -1,6 +1,6 @@
 {
   "name": "nero-bot",
-  "version": "1.4.1",
+  "version": "1.4.2",
   "description": "Nero Bot v1.4.0: carrusel portado íntegramente desde Yuta-Bot con @itsliaaa/baileys rc.9",
   "type": "module",
   "main": "src/index.js",

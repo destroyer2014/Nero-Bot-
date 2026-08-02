@@ -369,7 +369,7 @@ export const tiktokSearch={name:'tiktoksearch',aliases:['ttsearch'],async execut
   const input=queryText(ctx.args)
   if(!input)throw new Error(usage('tiktoksearch','<búsqueda>'))
   const response=await evoGet('/search/tiktok',{query:input})
-  const list=(response.data||[]).slice(0,10)
+  const list=(response.data||[]).slice(0,8)
   if(!list.length)throw new Error('No encontré resultados en TikTok.')
 
   const cards=[]
@@ -395,12 +395,12 @@ export const tiktokSearch={name:'tiktoksearch',aliases:['ttsearch'],async execut
         `*Shares:* ${stats.shares||0}`,
         `*Reproducciones:* ${stats.views||0}`
       ].join('\n'),
-      buttons:[copyButton('Copiar comando',command),urlButton('Abrir TikTok',original)]
+      buttons:[copyButton('Copiar comando',command)]
     })
   }
 
   try{
-    const sent=await sendCarousel(ctx.sock,ctx.chat,{body:`🎵 *TikTok Buscador*\nResultados para: *${input}*`,cards},ctx.msg)
+    const sent=await sendCarousel(ctx.sock,ctx.chat,{body:`🎵 *TikTok Buscador*\nResultados para: *${input}*`,cards})
     if(!sent?.key?.id) throw new Error('El carrusel no devolvió confirmación de envío.')
   }catch(error){
     console.error('TikTok Search: carrusel rechazado:',error)
