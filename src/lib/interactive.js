@@ -96,7 +96,7 @@ export function copyButton(text, value) {
 
 // Constructor adaptado del carrusel funcional de Yuta-Bot.
 // Cada portada se sube primero y su imageMessage se coloca dentro del header.
-export async function sendCarousel(sock, chat, { body = '', footer = 'Nero Bot', cards = [] }, quoted) {
+export async function sendCarousel(sock, chat, { body = '', footer = 'Nero Bot', cards = [], mentions = [] }, quoted) {
   if (!Array.isArray(cards) || !cards.length) throw new Error('No hay resultados para mostrar.')
 
   const preparedCards = []
@@ -104,13 +104,16 @@ export async function sendCarousel(sock, chat, { body = '', footer = 'Nero Bot',
     let imageMessage = null
     if (card.image) {
       try {
-        imageMessage = await prepareImage(sock, card.image)
+        const media = await prepareWAMessageMedia(
+          { image: Buffer.isBuffer(card.image) ? card.image : card.image?.url ? card.image : { url: card.image } },
+          { upload: sock.waUploadToServer }
+        )
+        imageMessage = media.imageMessage || null
       } catch (error) {
         console.error(`[CARRUSEL] Error preparando portada ${index + 1}:`, error?.message || error)
       }
     }
 
-    // WhatsApp suele rechazar tarjetas sin portada. Se omiten en vez de romper el carrusel completo.
     if (!imageMessage) continue
 
     preparedCards.push(proto.Message.InteractiveMessage.create({
@@ -144,14 +147,15 @@ export async function sendCarousel(sock, chat, { body = '', footer = 'Nero Bot',
           carouselMessage: proto.Message.InteractiveMessage.CarouselMessage.create({
             cards: preparedCards,
             messageVersion: 1
-          })
+          }),
+          contextInfo: mentions.length ? { mentionedJid: mentions } : undefined
         })
       }
     }
   })
 
   const message = generateWAMessageFromContent(chat, messageContent, {
-    userJid: sock.user?.id || sock.user?.jid,
+    userJid: sock.user?.jid || sock.user?.id,
     quoted
   })
   await sock.relayMessage(chat, message.message, { messageId: message.key.id })

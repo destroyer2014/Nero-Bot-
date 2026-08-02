@@ -9,7 +9,7 @@ const projectRoot = path.resolve(__dirname, '../..')
 
 const item = (commands, description) => [
   `│ ✦ *${commands}*`,
-  `│   > ✐ ${description}`
+  `> ✐ ${description}`
 ]
 
 const section = (title, entries) => [

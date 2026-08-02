@@ -187,18 +187,67 @@ export const stickerSearch={name:'stickersearch',aliases:['stickerssearch','stic
   const response=await evoGet('/stickerly/search',{query:input})
   const list=(response.resultados||response.results||response.data||[]).slice(0,12)
   if(!list.length)throw new Error('No encontré paquetes de stickers.')
-  const lines=list.map((item,index)=>[
-    `${index+1}. *${item.name||'Paquete sin nombre'}*`,
-    `Autor: ${item.author||'Desconocido'}`,
-    `Stickers: ${item.stickerCount??'?'}`,
-    `Animado: ${item.isAnimated?'Sí':'No'}${item.isPaid?' • De pago':''}`,
-    item.url||''
-  ].filter(Boolean).join('\n')).join('\n\n')
-  const caption=`🏷️ *Sticker.ly Search*\nBúsqueda: *${input}*\nPaquetes encontrados: ${list.length}\n\n${lines}`
-  const thumb=list[0]?.thumbnailUrl
-  if(thumb)await ctx.sock.sendMessage(ctx.chat,{image:{url:thumb},caption},{quoted:ctx.msg})
-  else await ctx.sock.sendMessage(ctx.chat,{text:caption},{quoted:ctx.msg})
+
+  const token=saveSelection('stickerly-pack',list)
+  const rows=list.map((item,index)=>({
+    header:item.isAnimated?'Paquete animado':'Paquete estático',
+    title:(item.name||'Paquete sin nombre').slice(0,80),
+    description:`${item.author||'Autor desconocido'} • ${item.stickerCount??'?'} stickers${item.isPaid?' • De pago':''}`.slice(0,100),
+    id:`${config.prefix}stickerpack ${token} ${index}`
+  }))
+
+  const first=list[0]
+  await sendInteractive(ctx.sock,ctx.chat,{
+    title:'Sticker.ly Search',
+    body:`Resultados para: *${input}*\nSelecciona un paquete para descargarlo y enviarlo.`,
+    media:first?.thumbnailUrl?{image:{url:first.thumbnailUrl}}:null,
+    buttons:[singleSelect('Seleccionar paquete',[{title:'Paquetes encontrados',rows}])]
+  },ctx.msg)
 })}}
+
+const wait = ms => new Promise(resolve => setTimeout(resolve, ms))
+
+export const stickerPack={name:'stickerpack',aliases:['stickerdetail'],async execute(ctx){return apiTask(ctx,async()=>{
+  const [token,indexRaw]=ctx.args
+  const list=getSelection(token,'stickerly-pack')
+  const selected=list?.[Number(indexRaw)]
+  if(!selected)throw new Error('La selección venció. Ejecuta .stickersearch nuevamente.')
+  if(!selected.url)throw new Error('El paquete elegido no incluye un enlace válido.')
+
+  const response=await evoGet('/stickerly/detail',{url:selected.url},{timeoutMs:120000})
+  const detail=response.detalles||response.details||response.data||{}
+  const stickers=Array.isArray(detail.stickers)?detail.stickers.slice(0,30):[]
+  if(!stickers.length)throw new Error('El paquete no contiene stickers descargables.')
+
+  await ctx.sock.sendMessage(ctx.chat,{text:[
+    '⏳ *Descargando paquete de Sticker.ly*',
+    `Paquete: ${detail.name||selected.name||'Sin nombre'}`,
+    `Autor: ${detail.author?.name||detail.author?.username||selected.author||'Desconocido'}`,
+    `Stickers: ${stickers.length}`
+  ].join('\n')},{quoted:ctx.msg})
+
+  let sent=0
+  let failed=0
+  for(const item of stickers){
+    try{
+      if(!item.imageUrl)throw new Error('URL vacía')
+      const response=await fetch(item.imageUrl,{redirect:'follow',headers:{'user-agent':'Mozilla/5.0'}})
+      if(!response.ok)throw new Error(`HTTP ${response.status}`)
+      const buffer=Buffer.from(await response.arrayBuffer())
+      if(!buffer.length)throw new Error('Sticker vacío')
+      await ctx.sock.sendMessage(ctx.chat,{sticker:buffer},{quoted:sent===0?ctx.msg:undefined})
+      sent+=1
+      await wait(450)
+    }catch(error){
+      failed+=1
+      console.error('Sticker.ly: no se pudo enviar sticker:',error?.message||error)
+    }
+  }
+
+  if(!sent)throw new Error('No se pudo enviar ningún sticker del paquete.')
+  await ctx.sock.sendMessage(ctx.chat,{text:`✅ *Paquete enviado*\nEnviados: ${sent}/${stickers.length}${failed?`\nFallidos: ${failed}`:''}`},{quoted:ctx.msg})
+})}}
+
 
 export const tiktok={name:'tiktok',aliases:['tt'],async execute(ctx){return apiTask(ctx,async()=>{const url=ctx.args[0];if(!isLikelyUrl(url))throw new Error(usage('tiktok','<enlace>'));await runDownloadJob(ctx,'heavy','.tiktok',async()=>{const response=await evoGet('/dl/tiktok',{url},{timeoutMs:180000});const d=response.data||{};if(!d.dl)throw new Error('TikTok no entregó contenido descargable.');const author=d.author?.nickname||d.author?.unique_id||'TikTok';const caption=[`${d.type==='image'?'🖼️':'🎵'} *${d.title||'TikTok'}*`,`👤 ${author}${d.author?.unique_id?` (@${d.author.unique_id})`:''}`,d.type==='image'&&Array.isArray(d.dl)?`📷 Fotos: ${d.dl.length}`:`⏱️ ${d.duration||'No disponible'}`,`🌎 ${d.region||'--'}`,d.stats?`▶️ ${d.stats.plays||0}  ❤️ ${d.stats.likes||0}  💬 ${d.stats.comments||0}`:''].filter(Boolean).join('\n');if(d.type==='image'&&Array.isArray(d.dl)){const items=d.dl.map((image,index)=>({type:'image',download_url:image,title:`TikTok foto ${index+1}`}));await sendImageAlbum(ctx.sock,ctx.chat,items,{quoted:ctx.msg,caption});return}const videoUrl=Array.isArray(d.dl)?d.dl[0]:d.dl;if(!videoUrl)throw new Error('TikTok no entregó el video.');await sendRemoteMedia(ctx.sock,ctx.chat,{type:'video',url:videoUrl,download_url:videoUrl,mime_type:'video/mp4',filename:`TikTok-${d.id||Date.now()}.mp4`},{quoted:ctx.msg,caption})})})}}
 
@@ -333,4 +382,4 @@ export const queueStatus={name:'cola',aliases:['queue'],async execute(ctx){await
 export const cancelDownload={name:'cancelardescarga',aliases:['cancelardl'],async execute(ctx){const removed=cancelUserJobs(ctx.sender);await ctx.sock.sendMessage(ctx.chat,{text:removed?`✅ Se cancelaron ${removed} descarga(s) tuyas en espera.`:'No tienes descargas esperando en la cola.'},{quoted:ctx.msg})}}
 export const clearQueue={name:'limpiarcola',aliases:['clearqueue'],async execute(ctx){if(!ctx.isStaff)throw new Error('Este comando es solo para owner y subowner.');const removed=clearWaitingQueues();await ctx.sock.sendMessage(ctx.chat,{text:`✅ Cola limpiada. Solicitudes eliminadas: ${removed}.`},{quoted:ctx.msg})}}
 
-export const downloadCommands=[play,playpick,ytmp3,ytmp4,spotify,spotifypick,ytmusic,ytmusicpick,apk,apkpick,apkmod,apkmodpick,facebook,instagram,twitch,threads,universal,pinterest,pinterestSearch,stickerSearch,tiktok,tiktokSearch,mediafire,mega,terabox,teraboxpick,anime,queueStatus,cancelDownload,clearQueue]
+export const downloadCommands=[play,playpick,ytmp3,ytmp4,spotify,spotifypick,ytmusic,ytmusicpick,apk,apkpick,apkmod,apkmodpick,facebook,instagram,twitch,threads,universal,pinterest,pinterestSearch,stickerSearch,stickerPack,tiktok,tiktokSearch,mediafire,mega,terabox,teraboxpick,anime,queueStatus,cancelDownload,clearQueue]
