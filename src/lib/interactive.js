@@ -160,9 +160,23 @@ export async function sendCarousel(
   })
 
   const generated = generateWAMessageFromContent(chat, messageContent, {
-    userJid: sock.user?.jid,
+    userJid: sock.user?.jid || sock.user?.id,
     quoted
   })
-  await sock.relayMessage(chat, generated.message, { messageId: generated.key.id })
+
+  console.log('[CARRUSEL] JID:', chat)
+  console.log('[CARRUSEL] Tarjetas:', preparedCards.length)
+  console.log('[CARRUSEL] Socket user:', sock.user)
+  console.log('[CARRUSEL] Message ID:', generated.key?.id)
+  console.log('[CARRUSEL] Mensaje generado:', JSON.stringify(generated.message, null, 2))
+
+  try {
+    const result = await sock.relayMessage(chat, generated.message, { messageId: generated.key.id })
+    console.log('[CARRUSEL] relayMessage OK:', result)
+  } catch (error) {
+    console.error('[CARRUSEL] relayMessage ERROR:', error)
+    throw error
+  }
+
   return generated
 }
