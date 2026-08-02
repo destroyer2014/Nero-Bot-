@@ -3,6 +3,8 @@ import {
   prepareWAMessageMedia,
   generateWAMessageFromContent
 } from '@itsliaaa/baileys'
+import fs from 'node:fs/promises'
+import path from 'node:path'
 
 function normalizeButtons(buttons = []) {
   const mapped = []
@@ -103,7 +105,17 @@ export async function sendInteractive(
 export async function sendCarousel(
   sock,
   chat,
-  { body = '', footer = 'Nero Bot', cards = [], mentions = [] },
+  {
+    body = '',
+    footer = 'Nero Bot',
+    cards = [],
+    mentions = [],
+    debugLabel = 'CARRUSEL',
+    messageVersion = 1,
+    cardLimit = 10,
+    omitCardFooter = false,
+    omitNativeFlowWhenEmpty = false
+  },
   quoted = null
 ) {
   if (!Array.isArray(cards) || !cards.length) {
@@ -112,7 +124,7 @@ export async function sendCarousel(
 
   const preparedCards = []
 
-  for (const card of cards.slice(0, 10)) {
+  for (const card of cards.slice(0, cardLimit)) {
     let imageMessage = null
     if (card.image) {
       try {
@@ -122,23 +134,31 @@ export async function sendCarousel(
         )
         imageMessage = media.imageMessage
       } catch (error) {
-        console.error('[CARRUSEL] Error imagen:', error?.message || error)
+        console.error(`[${debugLabel}] Error imagen:`, error?.message || error)
       }
     }
 
-    preparedCards.push(proto.Message.InteractiveMessage.create({
+    const normalizedButtons = normalizeButtons(card.buttons || [])
+    const cardFields = {
       header: proto.Message.InteractiveMessage.Header.create({
         title: card.title || '',
         hasMediaAttachment: Boolean(imageMessage),
         imageMessage: imageMessage || null
       }),
-      body: proto.Message.InteractiveMessage.Body.create({ text: card.body || '' }),
-      footer: proto.Message.InteractiveMessage.Footer.create({ text: card.footer || footer || '' }),
-      nativeFlowMessage: proto.Message.InteractiveMessage.NativeFlowMessage.create({
-        buttons: normalizeButtons(card.buttons || []),
+      body: proto.Message.InteractiveMessage.Body.create({ text: card.body || '' })
+    }
+
+    if (!omitCardFooter) {
+      cardFields.footer = proto.Message.InteractiveMessage.Footer.create({ text: card.footer || footer || '' })
+    }
+    if (!(omitNativeFlowWhenEmpty && normalizedButtons.length === 0)) {
+      cardFields.nativeFlowMessage = proto.Message.InteractiveMessage.NativeFlowMessage.create({
+        buttons: normalizedButtons,
         messageParamsJson: ''
       })
-    }))
+    }
+
+    preparedCards.push(proto.Message.InteractiveMessage.create(cardFields))
   }
 
   const messageContent = proto.Message.fromObject({
@@ -151,7 +171,7 @@ export async function sendCarousel(
           header: proto.Message.InteractiveMessage.Header.create({ hasMediaAttachment: false }),
           carouselMessage: proto.Message.InteractiveMessage.CarouselMessage.create({
             cards: preparedCards,
-            messageVersion: 1
+            messageVersion
           }),
           contextInfo: mentions.length ? { mentionedJid: mentions } : undefined
         })
@@ -159,24 +179,43 @@ export async function sendCarousel(
     }
   })
 
+  const rawUserJid = sock.user?.jid || sock.user?.id || ''
+  const normalizedUserJid = rawUserJid.replace(/:\d+@/, '@')
   const generated = generateWAMessageFromContent(chat, messageContent, {
-    userJid: sock.user?.jid || sock.user?.id,
+    userJid: normalizedUserJid || rawUserJid,
     quoted
   })
 
-  console.log('[CARRUSEL] JID:', chat)
-  console.log('[CARRUSEL] Tarjetas:', preparedCards.length)
-  console.log('[CARRUSEL] Socket user:', sock.user)
-  console.log('[CARRUSEL] Message ID:', generated.key?.id)
-  console.log('[CARRUSEL] Mensaje generado:', JSON.stringify(generated.message, null, 2))
+  const safeLabel = String(debugLabel || 'CARRUSEL').replace(/[^a-z0-9_-]/gi, '_')
+  const debugDir = path.resolve('logs', 'carousel-debug')
+  await fs.mkdir(debugDir, { recursive: true }).catch(() => {})
+  const debugFile = path.join(debugDir, `${Date.now()}-${safeLabel}.json`)
+  await fs.writeFile(debugFile, JSON.stringify({
+    label: debugLabel,
+    chat,
+    cardCount: preparedCards.length,
+    messageVersion,
+    socketUser: sock.user,
+    normalizedUserJid,
+    messageId: generated.key?.id,
+    message: generated.message
+  }, null, 2)).catch(error => console.error(`[${debugLabel}] No se pudo guardar JSON:`, error?.message || error))
+
+  console.log(`[${debugLabel}] JID:`, chat)
+  console.log(`[${debugLabel}] Tarjetas:`, preparedCards.length)
+  console.log(`[${debugLabel}] messageVersion:`, messageVersion)
+  console.log(`[${debugLabel}] userJid normalizado:`, normalizedUserJid)
+  console.log(`[${debugLabel}] Message ID:`, generated.key?.id)
+  console.log(`[${debugLabel}] JSON:`, debugFile)
 
   try {
     const result = await sock.relayMessage(chat, generated.message, { messageId: generated.key.id })
-    console.log('[CARRUSEL] relayMessage OK:', result)
+    console.log(`[${debugLabel}] relayMessage OK:`, result)
   } catch (error) {
-    console.error('[CARRUSEL] relayMessage ERROR:', error)
+    console.error(`[${debugLabel}] relayMessage ERROR:`, error)
     throw error
   }
 
   return generated
 }
+
