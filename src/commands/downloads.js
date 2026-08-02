@@ -1,7 +1,7 @@
 import config from '../../config.js'
 import { apiGet, ApiError } from '../lib/api.js'
 import { sendInteractive, quickReply, singleSelect, urlButton } from '../lib/interactive.js'
-import { formatBytes, formatDuration, isLikelyUrl, sendImageAlbum, sendRemoteMedia } from '../lib/media.js'
+import { formatBytes, formatDuration, isLikelyUrl, pickDownloadUrl, sendImageAlbum, sendRemoteMedia } from '../lib/media.js'
 import { cancelUserJobs, clearWaitingQueues, formatQueueStatus, runDownloadJob } from '../lib/downloadQueue.js'
 import { getSelection, saveSelection } from '../lib/selectionCache.js'
 
@@ -27,9 +27,16 @@ async function apiTask(ctx, fn) {
 }
 
 async function directMedia(ctx, endpoint, params, captionBuilder = null, options = {}) {
-  const data = await apiGet(endpoint, params, options)
-  const nested = data.selected || data.result || data.primary_media || {}
-  const item = { ...data, ...nested, selected: data.selected, result: data.result }
+  const attempts = Number(options.prepareAttempts || (endpoint === '/spotify' ? 5 : 1))
+  let data
+  let item
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    data = await apiGet(endpoint, params, options)
+    const nested = data.selected || data.result || data.primary_media || data.results?.[0] || {}
+    item = { ...data, ...nested, selected: data.selected, result: data.result, results: data.results }
+    if (pickDownloadUrl(item)) break
+    if (attempt < attempts) await new Promise(resolve => setTimeout(resolve, 1800 * attempt))
+  }
   const caption = captionBuilder ? captionBuilder(data, item) : `*${data.title || item.title || config.botName}*`
   await sendRemoteMedia(ctx.sock, ctx.chat, item, { quoted: ctx.msg, caption, forceDocument: options.forceDocument })
 }
@@ -124,7 +131,56 @@ export const pinterest={name:'pinterest',aliases:['pin','pindl'],async execute(c
 export const terabox={name:'terabox',aliases:['tb'],async execute(ctx){return apiTask(ctx,async()=>{const url=ctx.args[0];if(!isLikelyUrl(url))throw new Error(usage('terabox','<enlace>'));const d=await apiGet('/terabox',{url,limit:50});const files=d.files||[];if(!files.length)throw new Error('No encontré archivos en TeraBox.');const token=saveSelection('terabox',files);const rows=files.slice(0,10).map((f,i)=>({header:'Archivo',title:f.file_name.slice(0,90),description:formatBytes(f.size_bytes),id:`${config.prefix}teraboxpick ${token} ${i}`}));await sendInteractive(ctx.sock,ctx.chat,{title:'TeraBox Downloader',body:`Se encontraron ${files.length} archivo(s).`,media:files[0].thumb?{image:{url:files[0].thumb}}:null,buttons:[singleSelect('Seleccionar',[{title:'Archivos',rows}])]},ctx.msg)})}}
 export const teraboxpick={name:'teraboxpick',aliases:[],async execute(ctx){return apiTask(ctx,async()=>{const list=getSelection(ctx.args[0],'terabox');const f=list?.[Number(ctx.args[1])];if(!f)throw new Error('La selección venció.');await runDownloadJob(ctx,'heavy','.terabox',()=>sendRemoteMedia(ctx.sock,ctx.chat,{...f,type:'file',filename:f.file_name,url:f.download_url_full},{quoted:ctx.msg,caption:`TeraBox • ${f.file_name}`,forceDocument:true}))})}}
 
-export const anime={name:'anime',aliases:['animesub'],async execute(ctx){return apiTask(ctx,async()=>{const raw=queryText(ctx.args);if(!raw)throw new Error(usage('anime','<nombre> [episodio]'));const parts=raw.split(/\s+/);const episode=Number(parts.at(-1));const hasEpisode=Number.isInteger(episode)&&episode>0;if(hasEpisode)parts.pop();const slug=parts.join('-').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[^a-z0-9-]/g,'');const d=await apiGet(`/anime/subespanol/${slug}`,{episode_limit:50});const info=d.anime_info||{};const chapters=(d.temporadas||[]).flatMap(t=>t.capitulos||[]);if(!hasEpisode){const rows=chapters.slice(0,50).map(c=>({header:`Episodio ${c.capitulo_numero}`,title:c.titulo_capitulo||`Episodio ${c.capitulo_numero}`,description:'Ver enlaces',id:`${config.prefix}anime ${parts.join(' ')} ${c.capitulo_numero}`}));await sendInteractive(ctx.sock,ctx.chat,{title:info.titulo||'Anime',body:`Episodios disponibles: ${chapters.length}`,media:info.imagen_portada?{image:{url:info.imagen_portada}}:null,buttons:[singleSelect('Elegir episodio',[{title:'Episodios',rows}])]},ctx.msg);return}const c=chapters.find(x=>Number(x.capitulo_numero)===episode);if(!c)throw new Error('No encontré ese episodio.');const ignore=['googleapis.com','jsdelivr.net','facebook.com','google-analytics.com','login.jkanime.net','hentaijk.com','connect.facebook.net'];const streams=(c.enlaces_reproduccion||[]).map(x=>x.url).filter(u=>!ignore.some(d=>u.includes(d)));const downloads=(c.enlaces_descarga||[]).map(x=>x.url);const buttons=[];if(downloads[0])buttons.push(urlButton('📥 Descargar 1',downloads[0]));if(downloads[1])buttons.push(urlButton('📥 Descargar 2',downloads[1]));if(streams[0])buttons.push(urlButton('▶️ Ver episodio',streams[0]));await sendInteractive(ctx.sock,ctx.chat,{title:`${info.titulo||'Anime'} • Episodio ${episode}`,body:[`*${c.titulo_capitulo||`Episodio ${episode}`}*`,'',...streams.slice(0,5).map((u,i)=>`Reproductor ${i+1}: ${u}`)].join('\n'),media:info.imagen_portada?{image:{url:info.imagen_portada}}:null,buttons},ctx.msg)})}}
+const animeAliases = {
+  'rezero': 're-zero-kara-hajimeru-isekai-seikatsu',
+  're-zero': 're-zero-kara-hajimeru-isekai-seikatsu',
+  're-zero-kara-hajimeru': 're-zero-kara-hajimeru-isekai-seikatsu',
+  'sao': 'sword-art-online'
+}
+
+function animeSlug(value) {
+  return value.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '')
+}
+
+async function fetchAnime(name) {
+  const normalized = animeSlug(name)
+  const candidates = [...new Set([animeAliases[normalized], normalized].filter(Boolean))]
+  let lastError
+  for (const slug of candidates) {
+    try { return await apiGet(`/anime/subespanol/${slug}`, { episode_limit: 50 }) }
+    catch (error) {
+      lastError = error
+      console.warn(`Anime: falló slug ${slug}:`, error?.message || error)
+    }
+  }
+  throw lastError || new Error('No encontré ese anime.')
+}
+
+export const anime={name:'anime',aliases:['animesub'],async execute(ctx){return apiTask(ctx,async()=>{
+  const raw=queryText(ctx.args);if(!raw)throw new Error(usage('anime','<nombre> [episodio]'))
+  const parts=raw.split(/\s+/);const episode=Number(parts.at(-1));const hasEpisode=Number.isInteger(episode)&&episode>0
+  if(hasEpisode)parts.pop()
+  const animeName=parts.join(' ')
+  let d
+  try { d=await fetchAnime(animeName) }
+  catch(error){
+    if([500,502,503,504].includes(error?.status)) throw new Error('El servidor de anime está temporalmente ocupado. Inténtalo nuevamente en unos minutos.')
+    throw error
+  }
+  const info=d.anime_info||{};const chapters=(d.temporadas||[]).flatMap(t=>t.capitulos||[])
+  if(!hasEpisode){
+    const rows=chapters.slice(0,50).map(c=>({header:`Episodio ${c.capitulo_numero}`,title:c.titulo_capitulo||`Episodio ${c.capitulo_numero}`,description:'Ver enlaces',id:`${config.prefix}anime ${animeName} ${c.capitulo_numero}`}))
+    await sendInteractive(ctx.sock,ctx.chat,{title:info.titulo||'Anime',body:`Episodios disponibles: ${chapters.length}`,media:info.imagen_portada?{image:{url:info.imagen_portada}}:null,buttons:[singleSelect('Elegir episodio',[{title:'Episodios',rows}])]},ctx.msg);return
+  }
+  const c=chapters.find(x=>Number(x.capitulo_numero)===episode);if(!c)throw new Error('No encontré ese episodio.')
+  const ignore=['googleapis.com','apis.google.com','fonts.googleapis.com','jsdelivr.net','facebook.com','google-analytics.com','login.jkanime.net','hentaijk.com','connect.facebook.net']
+  const streams=(c.enlaces_reproduccion||[]).map(x=>x.url).filter(u=>u&&!ignore.some(domain=>u.includes(domain)))
+  const downloads=(c.enlaces_descarga||[]).map(x=>x.url).filter(Boolean)
+  const buttons=[];if(downloads[0])buttons.push(urlButton('📥 Descargar 1',downloads[0]));if(downloads[1])buttons.push(urlButton('📥 Descargar 2',downloads[1]));if(streams[0])buttons.push(urlButton('▶️ Ver episodio',streams[0]))
+  await sendInteractive(ctx.sock,ctx.chat,{title:`${info.titulo||'Anime'} • Episodio ${episode}`,body:[`*${c.titulo_capitulo||`Episodio ${episode}`}*`,'',...streams.slice(0,5).map((u,i)=>`Reproductor ${i+1}: ${u}`)].join('\n'),media:info.imagen_portada?{image:{url:info.imagen_portada}}:null,buttons},ctx.msg)
+})}}
+
 
 
 export const queueStatus={name:'cola',aliases:['queue'],async execute(ctx){await ctx.sock.sendMessage(ctx.chat,{text:`📥 *Estado de descargas*\n\n${formatQueueStatus()}`},{quoted:ctx.msg})}}

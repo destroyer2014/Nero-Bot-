@@ -1,6 +1,6 @@
 {
   "name": "nero-bot",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "description": "Nero Bot para WhatsApp con Ultra Baileys, descargas, álbumes y colas",
   "type": "module",
   "main": "src/index.js",

@@ -1,6 +1,6 @@
 export default {
   botName: 'Nero Bot',
-  version: '1.2.0',
+  version: '1.2.1',
   prefix: '.',
   timezone: 'America/Lima',
   sessionName: 'principal',

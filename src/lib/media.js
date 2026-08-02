@@ -29,34 +29,58 @@ function absoluteApiUrl(value) {
 }
 
 export function pickDownloadUrl(data = {}) {
-  const selected = data.selected || {}
-  const result = data.result || {}
-  const candidates = [
-    selected.proxy_download_url_full,
-    selected.proxy_download_url,
-    data.proxy_download_url_full,
-    data.proxy_download_url,
-    selected.download_url_full,
-    selected.download_url,
-    result.download_url_full,
-    result.download_url,
-    data.download_url_full,
-    data.download_url,
-    selected.stream_url_full,
-    selected.stream_url,
-    data.stream_url_full,
-    data.stream_url,
-    selected.direct_url,
-    data.direct_url,
-    selected.url,
-    result.url,
-    data.url
+  const priorityKeys = [
+    'proxy_download_url_full', 'proxy_download_url',
+    'download_url_full', 'download_url', 'download_link', 'download_path',
+    'stream_url_full', 'stream_url', 'direct_url', 'url'
   ]
-  for (const candidate of candidates) {
-    const url = absoluteApiUrl(candidate)
-    if (url) return url
+
+  const seen = new Set()
+  const queue = [data]
+  const objects = []
+  while (queue.length) {
+    const value = queue.shift()
+    if (!value || typeof value !== 'object' || seen.has(value)) continue
+    seen.add(value)
+    objects.push(value)
+    if (Array.isArray(value)) queue.push(...value)
+    else {
+      // Los contenedores más comunes de DVYER deben revisarse primero.
+      for (const key of ['selected', 'result', 'primary_media', 'results', 'downloads', 'media', 'download_options', 'files']) {
+        if (value[key]) queue.unshift(value[key])
+      }
+      for (const child of Object.values(value)) if (child && typeof child === 'object') queue.push(child)
+    }
+  }
+
+  for (const key of priorityKeys) {
+    for (const object of objects) {
+      const candidate = object?.[key]
+      if (typeof candidate !== 'string' || !candidate.trim()) continue
+      const url = absoluteApiUrl(candidate)
+      if (url) return url
+    }
   }
   return null
+}
+
+async function fetchBuffer(url, attempts = 3) {
+  let lastError
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      const response = await fetch(url, {
+        headers: { accept: 'image/*,*/*;q=0.8', 'user-agent': `${config.botName}/${config.version}` }
+      })
+      if (!response.ok) throw new Error(`HTTP ${response.status}`)
+      const type = response.headers.get('content-type') || ''
+      if (type && !type.startsWith('image/')) throw new Error(`Contenido no válido: ${type}`)
+      return Buffer.from(await response.arrayBuffer())
+    } catch (error) {
+      lastError = error
+      if (attempt < attempts) await new Promise(resolve => setTimeout(resolve, 700 * attempt))
+    }
+  }
+  throw lastError
 }
 
 function inferDocumentMime(filename = '', supplied = '') {
@@ -102,10 +126,25 @@ export async function sendRemoteMedia(sock, chat, item, { quoted, caption = '', 
 }
 
 export async function sendImageAlbum(sock, chat, items, { quoted, caption = '' } = {}) {
-  const valid = items.map(item => ({ ...item, resolvedUrl: pickDownloadUrl(item) })).filter(item => item.resolvedUrl).slice(0, 10)
-  if (!valid.length) throw new Error('No encontré imágenes válidas para enviar.')
+  const candidates = items
+    .map(item => ({ ...item, resolvedUrl: pickDownloadUrl(item) }))
+    .filter(item => item.resolvedUrl)
+    .slice(0, 10)
+
+  const valid = []
+  for (const item of candidates) {
+    try {
+      valid.push({ ...item, buffer: await fetchBuffer(item.resolvedUrl) })
+    } catch (error) {
+      console.warn(`Pinterest: imagen omitida (${item.resolvedUrl}):`, error?.message || error)
+    }
+  }
+
+  if (!valid.length) throw new Error('Pinterest no entregó imágenes disponibles en este momento.')
+  const finalCaption = caption.replace(/Resultados:\s*\d+/i, `Resultados: ${valid.length}`)
+
   if (valid.length === 1) {
-    return sock.sendMessage(chat, { image: { url: valid[0].resolvedUrl }, caption }, { quoted })
+    return sock.sendMessage(chat, { image: valid[0].buffer, caption: finalCaption }, { quoted })
   }
 
   try {
@@ -115,8 +154,8 @@ export async function sendImageAlbum(sock, chat, items, { quoted, caption = '' }
 
     for (let index = 0; index < valid.length; index += 1) {
       await sock.sendMessage(chat, {
-        image: { url: valid[index].resolvedUrl },
-        caption: index === 0 ? caption : undefined,
+        image: valid[index].buffer,
+        caption: index === 0 ? finalCaption : undefined,
         albumParentKey: parent.key
       })
     }
@@ -125,9 +164,10 @@ export async function sendImageAlbum(sock, chat, items, { quoted, caption = '' }
     console.warn('El cliente no aceptó el álbum; usando envío consecutivo:', error?.message || error)
     for (let index = 0; index < valid.length; index += 1) {
       await sock.sendMessage(chat, {
-        image: { url: valid[index].resolvedUrl },
-        caption: index === 0 ? caption : undefined
+        image: valid[index].buffer,
+        caption: index === 0 ? finalCaption : undefined
       }, { quoted: index === 0 ? quoted : undefined })
     }
   }
 }
+
