@@ -87,6 +87,10 @@ function inferDocumentMime(filename = '', supplied = '') {
   if (supplied) return supplied
   const extension = path.extname(filename).toLowerCase()
   if (extension === '.apk') return 'application/vnd.android.package-archive'
+  if (extension === '.mp4') return 'video/mp4'
+  if (extension === '.mkv') return 'video/x-matroska'
+  if (extension === '.webm') return 'video/webm'
+  if (extension === '.avi') return 'video/x-msvideo'
   if (extension === '.xapk' || extension === '.apks' || extension === '.bin') return 'application/octet-stream'
   if (extension === '.zip') return 'application/zip'
   if (extension === '.pdf') return 'application/pdf'
