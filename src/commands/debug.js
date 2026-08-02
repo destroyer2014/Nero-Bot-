@@ -1,6 +1,7 @@
 import sharp from 'sharp'
 import config from '../../config.js'
-import { sendCarousel, quickReply, copyButton, urlButton } from '../lib/interactive.js'
+import { sendCarousel, sendInteractive, quickReply, copyButton, urlButton, singleSelect } from '../lib/interactive.js'
+import { WAProto as proto, generateWAMessageFromContent } from '@itsliaaa/baileys'
 
 const wait = ms => new Promise(resolve => setTimeout(resolve, ms))
 
@@ -105,6 +106,114 @@ export const testCarousel = {
       '✅ *Diagnóstico terminado*\n\n' +
       'Dime cuáles pruebas viste: 1, 2, 3, 4, 5 o 6. ' +
       'También envíame las líneas de consola `[TEST-x]` si alguna muestra ERROR.'
+    )
+  }
+}
+
+
+async function runModernTest(ctx, number, title, fn) {
+  const label = `MODERN-${number}`
+  console.log(`\n[${label}] INICIO: ${title}`)
+  await announce(ctx, `🧪 *${label}*\n${title}\n\nConfirma visualmente si aparece.`)
+  try {
+    const result = await fn()
+    console.log(`[${label}] ENVÍO OK:`, result?.key?.id || result || 'sin id')
+  } catch (error) {
+    console.error(`[${label}] ERROR:`, error)
+    await announce(ctx, `❌ *${label}* lanzó error:\n${error?.message || error}`)
+  }
+  await wait(2500)
+}
+
+export const testModernInteractive = {
+  name: 'testmodern',
+  aliases: ['testnative', 'modernui'],
+  async execute(ctx) {
+    await announce(ctx,
+      '🧬 *Prueba de formatos nativos iniciada*\n\n' +
+      'Estas pruebas no son carruseles. Sirven para comprobar qué familias de mensajes interactivos acepta esta sesión/cliente de WhatsApp.'
+    )
+
+    await runModernTest(ctx, 1, 'Encuesta nativa enviada con sock.sendMessage', async () => {
+      return ctx.sock.sendMessage(ctx.chat, {
+        poll: {
+          name: '¿Puedes ver esta encuesta de Nero Bot?',
+          values: ['Sí, aparece', 'No aparece'],
+          selectableCount: 1
+        }
+      })
+    })
+
+    await runModernTest(ctx, 2, 'InteractiveMessage plano con quick_reply', async () => {
+      return sendInteractive(ctx.sock, ctx.chat, {
+        title: 'Nero Bot',
+        body: 'Prueba de mensaje interactivo plano.',
+        footer: 'MODERN-2',
+        buttons: [quickReply('Probar ping', `${config.prefix}ping`)]
+      })
+    })
+
+    await runModernTest(ctx, 3, 'InteractiveMessage plano con single_select', async () => {
+      return sendInteractive(ctx.sock, ctx.chat, {
+        title: 'Nero Bot',
+        body: 'Abre la lista y elige una opción.',
+        footer: 'MODERN-3',
+        buttons: [singleSelect('Seleccionar', [{
+          title: 'Pruebas',
+          rows: [
+            { title: 'Ping', description: 'Ejecuta el comando ping', id: `${config.prefix}ping` },
+            { title: 'Menú', description: 'Abre el menú', id: `${config.prefix}menu` }
+          ]
+        }])]
+      })
+    })
+
+    await runModernTest(ctx, 4, 'ButtonsMessage clásico (sin InteractiveMessage)', async () => {
+      const content = proto.Message.fromObject({
+        buttonsMessage: {
+          contentText: 'Prueba del formato clásico de botones.',
+          footerText: 'MODERN-4',
+          headerType: 1,
+          buttons: [
+            { buttonId: `${config.prefix}ping`, buttonText: { displayText: 'Ping' }, type: 1 },
+            { buttonId: `${config.prefix}menu`, buttonText: { displayText: 'Menú' }, type: 1 }
+          ]
+        }
+      })
+      const raw = ctx.sock.user?.id || ''
+      const userJid = raw.replace(/:\\d+@/, '@')
+      const generated = generateWAMessageFromContent(ctx.chat, content, { userJid })
+      await ctx.sock.relayMessage(ctx.chat, generated.message, { messageId: generated.key.id })
+      return generated
+    })
+
+    await runModernTest(ctx, 5, 'ListMessage clásico (sin InteractiveMessage)', async () => {
+      const content = proto.Message.fromObject({
+        listMessage: {
+          title: 'Nero Bot',
+          description: 'Prueba de lista clásica.',
+          buttonText: 'Abrir lista',
+          listType: 1,
+          footerText: 'MODERN-5',
+          sections: [{
+            title: 'Opciones',
+            rows: [
+              { title: 'Ping', description: 'Ejecuta ping', rowId: `${config.prefix}ping` },
+              { title: 'Menú', description: 'Abre el menú', rowId: `${config.prefix}menu` }
+            ]
+          }]
+        }
+      })
+      const raw = ctx.sock.user?.id || ''
+      const userJid = raw.replace(/:\\d+@/, '@')
+      const generated = generateWAMessageFromContent(ctx.chat, content, { userJid })
+      await ctx.sock.relayMessage(ctx.chat, generated.message, { messageId: generated.key.id })
+      return generated
+    })
+
+    await announce(ctx,
+      '✅ *Prueba moderna terminada*\n\n' +
+      'Indica cuáles viste realmente: encuesta 1, botón 2, lista nativa 3, botones clásicos 4 o lista clásica 5.'
     )
   }
 }
