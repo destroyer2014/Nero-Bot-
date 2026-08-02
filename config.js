@@ -3,7 +3,7 @@ export default {
   creator: 'ArcadiaCorps',
   plugins: '60+',
   website: 'https://arcadiacorps.online',
-  version: '1.3.5',
+  version: '1.3.6',
   prefix: '.',
   timezone: 'America/Lima',
   sessionName: 'principal',

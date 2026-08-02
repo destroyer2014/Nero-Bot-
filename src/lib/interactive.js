@@ -1,89 +1,159 @@
-import { generateWAMessageFromContent, prepareWAMessageMedia, proto } from '@whiskeysockets/baileys'
+import {
+  generateWAMessageFromContent,
+  prepareWAMessageMedia,
+  proto
+} from '@whiskeysockets/baileys'
+
+function normalizeButtons(buttons = []) {
+  return buttons.map(button => {
+    if (button?.name && button?.buttonParamsJson) return button
+    if (button?.tipo === 'reply') return quickReply(button.texto, button.payload)
+    if (button?.tipo === 'url') return urlButton(button.texto, button.payload)
+    if (button?.tipo === 'copy') return copyButton(button.texto, button.payload)
+    return button
+  }).filter(Boolean)
+}
+
+async function prepareImage(sock, image) {
+  if (!image) return null
+  const source = Buffer.isBuffer(image) ? image : image?.url ? image : { url: image }
+  const prepared = await prepareWAMessageMedia(
+    { image: source },
+    { upload: sock.waUploadToServer }
+  )
+  return prepared.imageMessage || null
+}
 
 export async function sendInteractive(sock, chat, { title = '', body = '', footer = 'Nero Bot', media = null, buttons = [] }, quoted) {
-  let header = proto.Message.InteractiveMessage.Header.create({ title, hasMediaAttachment: false })
+  let imageMessage = null
   if (media?.image) {
-    const prepared = await prepareWAMessageMedia({ image: media.image }, { upload: sock.waUploadToServer })
-    header = proto.Message.InteractiveMessage.Header.create({
-      title,
-      hasMediaAttachment: true,
-      imageMessage: prepared.imageMessage
-    })
+    try {
+      imageMessage = await prepareImage(sock, media.image)
+    } catch (error) {
+      console.error('[INTERACTIVO] Error preparando imagen:', error?.message || error)
+    }
   }
 
-  const content = proto.Message.InteractiveMessage.create({
-    header,
-    body: proto.Message.InteractiveMessage.Body.create({ text: body }),
-    footer: proto.Message.InteractiveMessage.Footer.create({ text: footer }),
-    nativeFlowMessage: proto.Message.InteractiveMessage.NativeFlowMessage.create({ buttons })
-  })
-
-  const message = generateWAMessageFromContent(chat, {
+  const messageContent = proto.Message.fromObject({
     viewOnceMessage: {
       message: {
-        messageContextInfo: { deviceListMetadata: {}, deviceListMetadataVersion: 2 },
-        interactiveMessage: content
+        messageContextInfo: {
+          deviceListMetadata: {},
+          deviceListMetadataVersion: 2
+        },
+        interactiveMessage: proto.Message.InteractiveMessage.create({
+          body: proto.Message.InteractiveMessage.Body.create({ text: body || '' }),
+          footer: proto.Message.InteractiveMessage.Footer.create({ text: footer || '' }),
+          header: proto.Message.InteractiveMessage.Header.create({
+            title: title || '',
+            hasMediaAttachment: Boolean(imageMessage),
+            imageMessage: imageMessage || null
+          }),
+          nativeFlowMessage: proto.Message.InteractiveMessage.NativeFlowMessage.create({
+            buttons: normalizeButtons(buttons),
+            messageParamsJson: ''
+          })
+        })
       }
     }
-  }, { userJid: sock.user?.id, quoted })
+  })
 
+  const message = generateWAMessageFromContent(chat, messageContent, {
+    userJid: sock.user?.id || sock.user?.jid,
+    quoted
+  })
   await sock.relayMessage(chat, message.message, { messageId: message.key.id })
   return message
 }
 
 export function quickReply(text, id) {
-  return { name: 'quick_reply', buttonParamsJson: JSON.stringify({ display_text: text, id }) }
+  return {
+    name: 'quick_reply',
+    buttonParamsJson: JSON.stringify({ display_text: text, id })
+  }
 }
 
 export function singleSelect(title, sections) {
-  return { name: 'single_select', buttonParamsJson: JSON.stringify({ title, sections }) }
+  return {
+    name: 'single_select',
+    buttonParamsJson: JSON.stringify({ title, sections })
+  }
 }
 
 export function urlButton(text, url) {
-  return { name: 'cta_url', buttonParamsJson: JSON.stringify({ display_text: text, url, merchant_url: url }) }
+  return {
+    name: 'cta_url',
+    buttonParamsJson: JSON.stringify({ display_text: text, url, merchant_url: url })
+  }
 }
 
 export function copyButton(text, value) {
-  return { name: 'cta_copy', buttonParamsJson: JSON.stringify({ display_text: text, copy_code: value }) }
+  return {
+    name: 'cta_copy',
+    buttonParamsJson: JSON.stringify({ display_text: text, copy_code: value })
+  }
 }
 
+// Constructor adaptado del carrusel funcional de Yuta-Bot.
+// Cada portada se sube primero y su imageMessage se coloca dentro del header.
 export async function sendCarousel(sock, chat, { body = '', footer = 'Nero Bot', cards = [] }, quoted) {
-  if (!cards.length) throw new Error('No hay resultados para mostrar.')
+  if (!Array.isArray(cards) || !cards.length) throw new Error('No hay resultados para mostrar.')
 
   const preparedCards = []
-  for (const card of cards.slice(0, 10)) {
-    let header = proto.Message.InteractiveMessage.Header.create({ title: card.title || '', hasMediaAttachment: false })
+  for (const [index, card] of cards.slice(0, 10).entries()) {
+    let imageMessage = null
     if (card.image) {
-      const prepared = await prepareWAMessageMedia({ image: card.image }, { upload: sock.waUploadToServer })
-      header = proto.Message.InteractiveMessage.Header.create({
+      try {
+        imageMessage = await prepareImage(sock, card.image)
+      } catch (error) {
+        console.error(`[CARRUSEL] Error preparando portada ${index + 1}:`, error?.message || error)
+      }
+    }
+
+    // WhatsApp suele rechazar tarjetas sin portada. Se omiten en vez de romper el carrusel completo.
+    if (!imageMessage) continue
+
+    preparedCards.push(proto.Message.InteractiveMessage.create({
+      header: proto.Message.InteractiveMessage.Header.create({
         title: card.title || '',
         hasMediaAttachment: true,
-        imageMessage: prepared.imageMessage
-      })
-    }
-    preparedCards.push(proto.Message.InteractiveMessage.create({
-      header,
+        imageMessage
+      }),
       body: proto.Message.InteractiveMessage.Body.create({ text: card.body || '' }),
-      footer: proto.Message.InteractiveMessage.Footer.create({ text: card.footer || footer }),
-      nativeFlowMessage: proto.Message.InteractiveMessage.NativeFlowMessage.create({ buttons: card.buttons || [] })
+      footer: proto.Message.InteractiveMessage.Footer.create({ text: card.footer || footer || '' }),
+      nativeFlowMessage: proto.Message.InteractiveMessage.NativeFlowMessage.create({
+        buttons: normalizeButtons(card.buttons || []),
+        messageParamsJson: ''
+      })
     }))
   }
 
-  const content = proto.Message.InteractiveMessage.create({
-    body: proto.Message.InteractiveMessage.Body.create({ text: body }),
-    footer: proto.Message.InteractiveMessage.Footer.create({ text: footer }),
-    carouselMessage: proto.Message.InteractiveMessage.CarouselMessage.create({ cards: preparedCards })
-  })
+  if (!preparedCards.length) throw new Error('No pude preparar ninguna portada para el carrusel.')
 
-  const message = generateWAMessageFromContent(chat, {
+  const messageContent = proto.Message.fromObject({
     viewOnceMessage: {
       message: {
-        messageContextInfo: { deviceListMetadata: {}, deviceListMetadataVersion: 2 },
-        interactiveMessage: content
+        messageContextInfo: {
+          deviceListMetadata: {},
+          deviceListMetadataVersion: 2
+        },
+        interactiveMessage: proto.Message.InteractiveMessage.create({
+          body: proto.Message.InteractiveMessage.Body.create({ text: body || '' }),
+          footer: proto.Message.InteractiveMessage.Footer.create({ text: footer || '' }),
+          header: proto.Message.InteractiveMessage.Header.create({ hasMediaAttachment: false }),
+          carouselMessage: proto.Message.InteractiveMessage.CarouselMessage.create({
+            cards: preparedCards,
+            messageVersion: 1
+          })
+        })
       }
     }
-  }, { userJid: sock.user?.id, quoted })
+  })
 
+  const message = generateWAMessageFromContent(chat, messageContent, {
+    userJid: sock.user?.id || sock.user?.jid,
+    quoted
+  })
   await sock.relayMessage(chat, message.message, { messageId: message.key.id })
   return message
 }
