@@ -69,3 +69,23 @@ Los comandos reciben estas propiedades para aplicar permisos:
 - `isSubOwner`: únicamente el subowner.
 - `isStaff`: owner o subowner.
 - `permissionLevel`: `owner`, `subowner` o `user`.
+
+## Corrección de vinculación v1.0.2
+
+Esta versión solicita el código únicamente cuando el socket ya está listo para autenticar,
+usa una identidad válida de Google Chrome en macOS y deja que Baileys seleccione su versión
+compatible de WhatsApp Web.
+
+Para limpiar una vinculación fallida:
+
+```bash
+rm -rf sessions/principal
+npm start
+```
+
+Evita pedir muchos códigos seguidos, porque WhatsApp puede limitar temporalmente los intentos.
+También puedes definir el número sin interacción:
+
+```bash
+NERO_PHONE=519XXXXXXXX npm start
+```

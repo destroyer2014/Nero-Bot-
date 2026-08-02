@@ -6,7 +6,6 @@ import { Boom } from '@hapi/boom'
 import makeWASocket, {
   Browsers,
   DisconnectReason,
-  fetchLatestBaileysVersion,
   jidNormalizedUser,
   useMultiFileAuthState
 } from '@whiskeysockets/baileys'
@@ -15,59 +14,103 @@ import { extractText } from './lib/text.js'
 import { findCommand } from './commands/index.js'
 import { getPermissionLevel, isOwner, isStaff, isSubOwner } from './lib/permissions.js'
 
-const logger = pino({ level: 'silent' })
+const logger = pino({ level: process.env.BAILEYS_LOG_LEVEL || 'silent' })
 const sessionPath = path.resolve('sessions', config.sessionName)
+
+let phoneNumber = null
 let pairingCodeRequested = false
-let reconnecting = false
+let reconnectTimer = null
 
 function cleanPhoneNumber(value = '') {
-  return value.replace(/\D/g, '')
+  return String(value).replace(/\D/g, '')
 }
 
 async function askPhoneNumber() {
+  if (phoneNumber) return phoneNumber
+
+  const configuredNumber = cleanPhoneNumber(process.env.NERO_PHONE || '')
+  if (configuredNumber.length >= 8) {
+    phoneNumber = configuredNumber
+    return phoneNumber
+  }
+
   const rl = readline.createInterface({ input: process.stdin, output: process.stdout })
   try {
-    const answer = await rl.question('Escribe el número con código de país, sin + ni espacios (ejemplo 51987654321): ')
+    const answer = await rl.question(
+      'Escribe el número de la cuenta a vincular, con código de país y solo dígitos (ejemplo 51987654321): '
+    )
     const phone = cleanPhoneNumber(answer)
-    if (phone.length < 8) throw new Error('El número ingresado no parece válido.')
-    return phone
+    if (phone.length < 8 || phone.length > 15) {
+      throw new Error('El número debe tener entre 8 y 15 dígitos, incluyendo el código de país.')
+    }
+    phoneNumber = phone
+    return phoneNumber
   } finally {
     rl.close()
   }
 }
 
-async function startNeroBot() {
-  reconnecting = false
-  const { state, saveCreds } = await useMultiFileAuthState(sessionPath)
-  const { version } = await fetchLatestBaileysVersion()
+function formatPairingCode(code = '') {
+  return code.match(/.{1,4}/g)?.join('-') || code
+}
 
+function scheduleReconnect() {
+  if (reconnectTimer) return
+  reconnectTimer = setTimeout(() => {
+    reconnectTimer = null
+    startNeroBot().catch(error => console.error('Error al reconectar:', error))
+  }, 4000)
+}
+
+async function startNeroBot() {
+  const { state, saveCreds } = await useMultiFileAuthState(sessionPath)
+  const needsPairing = !state.creds.registered
+
+  if (needsPairing) {
+    await askPhoneNumber()
+    pairingCodeRequested = false
+  }
+
+  // Baileys recomienda dejar la versión de WhatsApp Web en su valor predeterminado.
+  // Para vinculación por código se usa una identidad de navegador válida y lógica.
   const sock = makeWASocket({
-    version,
     auth: state,
     logger,
-    browser: Browsers.ubuntu(config.botName),
+    browser: Browsers.macOS('Google Chrome'),
     printQRInTerminal: false,
     markOnlineOnConnect: false,
     syncFullHistory: false,
-    generateHighQualityLinkPreview: true
+    generateHighQualityLinkPreview: true,
+    connectTimeoutMs: 60_000,
+    defaultQueryTimeoutMs: undefined,
+    keepAliveIntervalMs: 20_000
   })
 
   sock.ev.on('creds.update', saveCreds)
 
-  if (!state.creds.registered && !pairingCodeRequested) {
-    pairingCodeRequested = true
-    const phone = await askPhoneNumber()
-    await new Promise(resolve => setTimeout(resolve, 2000))
-    const code = await sock.requestPairingCode(phone)
-    console.log(`\nCódigo de vinculación de ${config.botName}: ${code.match(/.{1,4}/g)?.join('-') || code}\n`)
-    console.log('WhatsApp > Dispositivos vinculados > Vincular con número de teléfono.\n')
-  }
-
   sock.ev.on('connection.update', async update => {
-    const { connection, lastDisconnect } = update
+    const { connection, lastDisconnect, qr } = update
+
+    // Esperar a que WhatsApp entregue el evento QR indica que el socket ya está
+    // listo para comenzar el flujo de autenticación por código de teléfono.
+    if (needsPairing && qr && !pairingCodeRequested) {
+      pairingCodeRequested = true
+      try {
+        const code = await sock.requestPairingCode(phoneNumber)
+        console.log(`\n🔐 Código de vinculación de ${config.botName}: ${formatPairingCode(code)}\n`)
+        console.log('En WhatsApp: Dispositivos vinculados > Vincular un dispositivo > Vincular con número de teléfono.\n')
+        console.log('Mantén este proceso abierto hasta que aparezca el mensaje de conexión exitosa.\n')
+      } catch (error) {
+        pairingCodeRequested = false
+        const statusCode = new Boom(error)?.output?.statusCode
+        console.error(`❌ No se pudo generar el código${statusCode ? ` (HTTP ${statusCode})` : ''}:`, error?.message || error)
+        console.error('Borra sessions/principal y vuelve a intentar después de unos minutos. Evita varios intentos seguidos.')
+      }
+    }
 
     if (connection === 'open') {
       pairingCodeRequested = false
+      phoneNumber = null
       console.log(`✅ ${config.botName} conectado como ${sock.user?.id || 'cuenta vinculada'}`)
       console.log(`📌 Tipo de instancia: ${config.instanceType === 'subbot' ? 'Subbot' : 'Bot principal'}`)
     }
@@ -78,15 +121,15 @@ async function startNeroBot() {
 
       if (loggedOut) {
         pairingCodeRequested = false
-        console.error('❌ La sesión fue cerrada desde WhatsApp. Borra la carpeta de sesión y vuelve a vincular.')
+        phoneNumber = null
+        console.error('❌ WhatsApp cerró la sesión. Elimina la carpeta de esta sesión y vuelve a vincular.')
         return
       }
 
-      if (!reconnecting) {
-        reconnecting = true
-        console.log(`⚠️ Conexión cerrada (${statusCode || 'sin código'}). Reconectando...`)
-        setTimeout(() => startNeroBot().catch(console.error), 3000)
-      }
+      // WhatsApp desconecta una vez después de vincular y Baileys debe iniciar
+      // un socket nuevo usando las credenciales recién guardadas.
+      console.log(`⚠️ Conexión cerrada (${statusCode || 'sin código'}). Reconectando...`)
+      scheduleReconnect()
     }
   })
 
