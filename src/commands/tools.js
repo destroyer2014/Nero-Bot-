@@ -1,4 +1,5 @@
 import { downloadMediaMessage } from '@whiskeysockets/baileys'
+import sharp from 'sharp'
 import config from '../../config.js'
 import { apiGet, evoGet, requireEvoGbApiKey } from '../lib/api.js'
 import { sendRemoteMedia, sendImageAlbum, formatBytes, isLikelyUrl } from '../lib/media.js'
@@ -8,8 +9,9 @@ const usage=(n,v)=>`Uso: *${config.prefix}${n} ${v}*`
 function quotedMessage(msg){const c=msg.message?.extendedTextMessage?.contextInfo||msg.message?.imageMessage?.contextInfo||msg.message?.videoMessage?.contextInfo;return c?.quotedMessage?{key:{remoteJid:msg.key.remoteJid,id:c.stanzaId,participant:c.participant},message:c.quotedMessage}:null}
 async function mediaBuffer(ctx){const target=quotedMessage(ctx.msg)||ctx.msg;try{return await downloadMediaMessage(target,'buffer',{}, {logger:console,reuploadRequest:ctx.sock.updateMediaMessage})}catch{return null}}
 async function sendJsonError(ctx,error){console.error(error);await ctx.sock.sendMessage(ctx.chat,{text:`❌ ${error?.message||'No se pudo completar la herramienta.'}`},{quoted:ctx.msg})}
-async function multipartEvo(endpoint,buffer,filename='archivo.bin',field='file'){
+async function multipartEvo(endpoint,buffer,filename='archivo.bin',field='file',params={}){
  const key=requireEvoGbApiKey();const base=process.env.EVOGB_API_BASE_URL||'https://api.evogb.org';const url=new URL(endpoint,base);url.searchParams.set('key',key)
+ for(const [name,value] of Object.entries(params)){if(value!==undefined&&value!==null&&value!=='')url.searchParams.set(name,String(value))}
  const form=new FormData();form.append(field,new Blob([buffer]),filename)
  const r=await fetch(url,{method:'POST',body:form});const data=await r.json().catch(()=>({status:false,message:`HTTP ${r.status}`}));if(!r.ok||data.status===false)throw new Error(data.message||data.error||`HTTP ${r.status}`);return data
 }
@@ -29,9 +31,35 @@ export const ssweb=wrap('ssweb',['screenshotweb'],async ctx=>{const url=q(ctx);i
 export const tempmail=wrap('tempmail',['correo'],async ctx=>{if(ctx.args[0]==='inbox'){const email=tempStore.get(ctx.sender);if(!email)throw new Error('Primero crea un correo con .tempmail');const d=await evoGet('/tools/tempmail-read',{email});const list=d.data||[];await ctx.sock.sendMessage(ctx.chat,{text:list.length?`📬 *Bandeja*\n\n${JSON.stringify(list,null,2).slice(0,3500)}`:`📭 Bandeja vacía\nCorreo: ${email}`},{quoted:ctx.msg});return}const d=await evoGet('/tools/tempmail');const email=d.data?.email;if(!email)throw new Error('No se pudo generar el correo.');tempStore.set(ctx.sender,email);await ctx.sock.sendMessage(ctx.chat,{text:`📩 *Correo temporal*\n\n${email}\n\nConsulta: .tempmail inbox`},{quoted:ctx.msg})})
 const tempStore=new Map()
 
-async function imageTool(ctx,endpoint,params={}){const url=ctx.args.find(isLikelyUrl);if(!url)throw new Error('Por ahora usa una URL de imagen. Ejemplo: .hd https://...');const d=await apiGet(endpoint,{mode:'link',url,...params});await sendRemoteMedia(ctx.sock,ctx.chat,d,{quoted:ctx.msg,caption:`✨ ${d.title||'Imagen procesada'}\n${d.original_width||'?'}×${d.original_height||'?'} → ${d.width||'?'}×${d.height||'?'}\n${formatBytes(d.size_bytes)}`})}
-export const hd=wrap('hd',['remini'],ctx=>imageTool(ctx,'/image/hd',{scale:2,format:'auto'}))
-export const upscale=wrap('upscale',[],ctx=>imageTool(ctx,'/image/upscale',{scale:4,format:'auto'}))
+function findMediaUrl(value){
+ if(typeof value==='string'&&/^https?:\/\//i.test(value))return value
+ if(!value||typeof value!=='object')return null
+ const preferred=['download_url_full','download_url','stream_url_full','stream_url','display_url','image_url','result','url','output']
+ for(const key of preferred){const found=findMediaUrl(value[key]);if(found)return found}
+ for(const child of Object.values(value)){const found=findMediaUrl(child);if(found)return found}
+ return null
+}
+async function imageTool(ctx,endpoint,params={}){
+ const url=ctx.args.find(isLikelyUrl)
+ if(!url)throw new Error('Responde a una imagen o agrega una URL.')
+ const d=await apiGet(endpoint,{mode:'link',url,...params})
+ await sendRemoteMedia(ctx.sock,ctx.chat,d,{quoted:ctx.msg,caption:`✨ ${d.title||'Imagen procesada'}
+${d.original_width||'?'}×${d.original_height||'?'} → ${d.width||'?'}×${d.height||'?'}
+${formatBytes(d.size_bytes)}`})
+}
+async function enhanceImage(ctx,{scale=2}={}){
+ const url=ctx.args.find(isLikelyUrl)
+ if(url)return imageTool(ctx,scale>=4?'/image/upscale':'/image/hd',{scale,format:'auto'})
+ const buffer=await mediaBuffer(ctx)
+ if(!buffer)throw new Error(`Responde a una imagen con ${config.prefix}${scale>=4?'upscale':'hd'} o agrega una URL.`)
+ await ctx.sock.sendMessage(ctx.chat,{text:`✨ Mejorando imagen en x${scale}...`},{quoted:ctx.msg})
+ const d=await multipartEvo('/tools/upscale',buffer,'imagen.jpg','file',{scale})
+ const output=findMediaUrl(d?.data||d)
+ if(!output)throw new Error('La API procesó la imagen, pero no entregó una URL de salida.')
+ await ctx.sock.sendMessage(ctx.chat,{image:{url:output},caption:`✨ Imagen mejorada x${scale}`},{quoted:ctx.msg})
+}
+export const hd=wrap('hd',['remini'],ctx=>enhanceImage(ctx,{scale:2}))
+export const upscale=wrap('upscale',[],ctx=>enhanceImage(ctx,{scale:4}))
 export const compress=wrap('comprimir',['compress'],ctx=>imageTool(ctx,'/image/compress',{quality:Number(ctx.args[0])||80,max_width:1600,format:'jpg'}))
 export const restore=wrap('restaurar',['restore'],ctx=>imageTool(ctx,'/image/restore',{strength:'normal',scale:1,format:'auto'}))
 export const convert=wrap('convertir',['imgconvert'],ctx=>{const format=ctx.args[0]||'png';return imageTool({...ctx,args:ctx.args.slice(1)},'/image/convert',{format,quality:92,max_width:1600})})
@@ -41,6 +69,33 @@ export const removebg=wrap('removebg',['quitarfondo'],async ctx=>{const b=await 
 export const transcribe=wrap('transcribir',['totext','audiotexto'],async ctx=>{const b=await mediaBuffer(ctx);if(!b)throw new Error('Responde a un audio o video con .transcribir');const key=process.env.DVYER_API_KEY;const url=new URL('/tools/audio-transcribe',config.apiBaseUrl);url.searchParams.set('language','auto');url.searchParams.set('apikey',key);const f=new FormData();f.append('file',new Blob([b]),'audio.mp4');const r=await fetch(url,{method:'POST',body:f});const d=await r.json();if(!r.ok||d.ok===false)throw new Error(d.message||'Falló la transcripción');await ctx.sock.sendMessage(ctx.chat,{text:`📝 *Transcripción*\nIdioma: ${d.language||'?'}\nDuración: ${d.audio?.duration_seconds||'?'} s\n\n${d.text||'Sin texto'}`},{quoted:ctx.msg})})
 export const shazam=wrap('shazam',['whatmusic','quees'],async ctx=>{const b=await mediaBuffer(ctx);if(!b)throw new Error('Responde a un audio o video con .shazam');const d=await multipartEvo('/tools/whatmusic-shazam',b,'audio.mp4');const x=d.data||{};const i=x.info||{};await ctx.sock.sendMessage(ctx.chat,{image:x.media?.cover_hd?{url:x.media.cover_hd}:undefined,text:!x.media?.cover_hd?`🎵 ${i.title||'No identificada'}`:undefined,caption:x.media?.cover_hd?`🎵 *${i.title||'No identificada'}*\nArtista: ${i.artist||'?'}\nÁlbum: ${i.album||'?'}\nAño: ${i.year||'?'}\nConfianza: ${x.detection?.confidence?.percentage||'?'}%`:undefined},{quoted:ctx.msg})})
 export const removevocals=wrap('quitarvoz',['removevocals','instrumental'],async ctx=>{const b=await mediaBuffer(ctx);if(!b)throw new Error('Responde a un audio con .quitarvoz');const d=await multipartEvo('/tools/remove-vocals',b,'audio.mp3');const x=d.data||{};if(!x.vocal||!x.instrumental)throw new Error('La API no devolvió ambas pistas.');await ctx.sock.sendMessage(ctx.chat,{audio:{url:x.vocal},mimetype:'audio/mpeg',fileName:'voz.mp3'},{quoted:ctx.msg});await ctx.sock.sendMessage(ctx.chat,{audio:{url:x.instrumental},mimetype:'audio/mpeg',fileName:'instrumental.mp3'})})
-export const sticker=wrap('sticker',['s'],async ctx=>{const b=await mediaBuffer(ctx);if(!b)throw new Error('Responde a una imagen o video corto con .sticker');await ctx.sock.sendMessage(ctx.chat,{sticker:b},{quoted:ctx.msg})})
+function messageMediaType(msg){
+ const message=quotedMessage(msg)?.message||msg.message||{}
+ if(message.imageMessage)return {type:'image',mimetype:message.imageMessage.mimetype||'image/jpeg'}
+ if(message.stickerMessage)return {type:'sticker',mimetype:message.stickerMessage.mimetype||'image/webp'}
+ if(message.videoMessage)return {type:'video',mimetype:message.videoMessage.mimetype||'video/mp4'}
+ return {type:null,mimetype:null}
+}
+async function imageToSticker(buffer){
+ try{
+  return await sharp(buffer,{animated:false,failOn:'none'})
+   .rotate()
+   .resize(512,512,{fit:'contain',background:{r:0,g:0,b:0,alpha:0},withoutEnlargement:false})
+   .webp({quality:88,alphaQuality:100,effort:4})
+   .toBuffer()
+ }catch(error){
+  throw new Error(`No pude convertir esta imagen a sticker: ${error.message}`)
+ }
+}
+export const sticker=wrap('sticker',['s'],async ctx=>{
+ const media=messageMediaType(ctx.msg)
+ const b=await mediaBuffer(ctx)
+ if(!b)throw new Error('Responde a una imagen con .sticker o .s')
+ if(media.type==='video')throw new Error('Los stickers de video todavía no están habilitados. Usa una imagen por ahora.')
+ if(!['image','sticker'].includes(media.type))throw new Error('Responde a una imagen o sticker válido.')
+ const webp=media.type==='sticker'&&media.mimetype==='image/webp'?b:await imageToSticker(b)
+ if(!webp?.length||webp.length<100)throw new Error('La conversión generó un archivo vacío.')
+ await ctx.sock.sendMessage(ctx.chat,{sticker:webp},{quoted:ctx.msg})
+})
 
 export const toolCommands=[googleimages,wikipedia,translate,qr,textimage,textgif,textsticker,ytthumb,checkhost,country,ssweb,tempmail,hd,upscale,compress,restore,convert,ocr,removebg,transcribe,shazam,removevocals,sticker]

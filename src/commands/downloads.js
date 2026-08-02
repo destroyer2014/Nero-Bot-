@@ -144,6 +144,26 @@ export const pinterestSearch={name:'pinterestsearch',aliases:['pinsearch'],async
 Búsqueda: ${input}
 Resultados: ${items.length}`})})}}
 
+
+export const stickerSearch={name:'stickersearch',aliases:['stickerssearch','stickerly'],async execute(ctx){return apiTask(ctx,async()=>{
+  const input=queryText(ctx.args)
+  if(!input)throw new Error(usage('stickersearch','<nombre>'))
+  const response=await evoGet('/stickerly/search',{query:input})
+  const list=(response.resultados||response.results||response.data||[]).slice(0,12)
+  if(!list.length)throw new Error('No encontré paquetes de stickers.')
+  const lines=list.map((item,index)=>[
+    `${index+1}. *${item.name||'Paquete sin nombre'}*`,
+    `Autor: ${item.author||'Desconocido'}`,
+    `Stickers: ${item.stickerCount??'?'}`,
+    `Animado: ${item.isAnimated?'Sí':'No'}${item.isPaid?' • De pago':''}`,
+    item.url||''
+  ].filter(Boolean).join('\n')).join('\n\n')
+  const caption=`🏷️ *Sticker.ly Search*\nBúsqueda: *${input}*\nPaquetes encontrados: ${list.length}\n\n${lines}`
+  const thumb=list[0]?.thumbnailUrl
+  if(thumb)await ctx.sock.sendMessage(ctx.chat,{image:{url:thumb},caption},{quoted:ctx.msg})
+  else await ctx.sock.sendMessage(ctx.chat,{text:caption},{quoted:ctx.msg})
+})}}
+
 export const tiktok={name:'tiktok',aliases:['tt'],async execute(ctx){return apiTask(ctx,async()=>{const url=ctx.args[0];if(!isLikelyUrl(url))throw new Error(usage('tiktok','<enlace>'));await runDownloadJob(ctx,'heavy','.tiktok',async()=>{const response=await evoGet('/dl/tiktok',{url},{timeoutMs:180000});const d=response.data||{};if(!d.dl)throw new Error('TikTok no entregó el video.');const author=d.author?.nickname||d.author?.unique_id||'TikTok';await sendRemoteMedia(ctx.sock,ctx.chat,{type:'video',url:d.dl,download_url:d.dl,mime_type:'video/mp4',filename:`TikTok-${d.id||Date.now()}.mp4`},{quoted:ctx.msg,caption:[`🎵 *${d.title||'TikTok'}*`,`👤 ${author}`,`⏱️ ${d.duration||'No disponible'}`,`🌎 ${d.region||'--'}`,d.stats?`▶️ ${d.stats.plays||0}  ❤️ ${d.stats.likes||0}  💬 ${d.stats.comments||0}`:''].filter(Boolean).join('\n')})})})}}
 
 export const tiktokSearch={name:'tiktoksearch',aliases:['ttsearch'],async execute(ctx){return apiTask(ctx,async()=>{const input=queryText(ctx.args);if(!input)throw new Error(usage('tiktoksearch','<búsqueda>'));const response=await evoGet('/search/tiktok',{query:input});const list=(response.data||[]).slice(0,10);if(!list.length)throw new Error('No encontré resultados en TikTok.');const cards=list.map((item,index)=>{const username=item.author?.unique_id||'usuario';const original=`https://www.tiktok.com/@${username}/video/${item.id}`;const command=`${config.prefix}tiktok ${original}`;const stats=item.stats||{};return{title:`TikTok • Resultado ${index+1}`,image:item.cover?{url:item.cover}:null,body:[`*Título:* ${(item.title||'Sin título').slice(0,180)}`,`*Duración:* ${item.duration||'--'}`,`*Autor:* @${username}`,`*Likes:* ${stats.likes||0}`,`*Comentarios:* ${stats.comments||0}`,`*Shares:* ${stats.shares||0}`,`*Reproducciones:* ${stats.views||0}`].join('\n'),buttons:[copyButton('Copy',command),urlButton('Abrir TikTok',original)]}});await sendCarousel(ctx.sock,ctx.chat,{body:`🎵 *TikTok Buscador*\nResultados para: *${input}*`,cards},ctx.msg)})}}
@@ -231,4 +251,4 @@ export const queueStatus={name:'cola',aliases:['queue'],async execute(ctx){await
 export const cancelDownload={name:'cancelardescarga',aliases:['cancelardl'],async execute(ctx){const removed=cancelUserJobs(ctx.sender);await ctx.sock.sendMessage(ctx.chat,{text:removed?`✅ Se cancelaron ${removed} descarga(s) tuyas en espera.`:'No tienes descargas esperando en la cola.'},{quoted:ctx.msg})}}
 export const clearQueue={name:'limpiarcola',aliases:['clearqueue'],async execute(ctx){if(!ctx.isStaff)throw new Error('Este comando es solo para owner y subowner.');const removed=clearWaitingQueues();await ctx.sock.sendMessage(ctx.chat,{text:`✅ Cola limpiada. Solicitudes eliminadas: ${removed}.`},{quoted:ctx.msg})}}
 
-export const downloadCommands=[play,playpick,ytmp3,ytmp4,spotify,spotifypick,ytmusic,ytmusicpick,apk,apkpick,apkmod,apkmodpick,facebook,instagram,twitch,threads,universal,pinterest,pinterestSearch,tiktok,tiktokSearch,mediafire,mega,terabox,teraboxpick,anime,queueStatus,cancelDownload,clearQueue]
+export const downloadCommands=[play,playpick,ytmp3,ytmp4,spotify,spotifypick,ytmusic,ytmusicpick,apk,apkpick,apkmod,apkmodpick,facebook,instagram,twitch,threads,universal,pinterest,pinterestSearch,stickerSearch,tiktok,tiktokSearch,mediafire,mega,terabox,teraboxpick,anime,queueStatus,cancelDownload,clearQueue]
