@@ -5,3 +5,6 @@ auth_info/
 .env
 *.log
 npm-debug.log*
+
+.env.*
+!.env.example

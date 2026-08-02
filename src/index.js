@@ -1,3 +1,4 @@
+import 'dotenv/config'
 import readline from 'node:readline/promises'
 import process from 'node:process'
 import path from 'node:path'
