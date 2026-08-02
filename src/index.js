@@ -4,7 +4,6 @@ import path from 'node:path'
 import pino from 'pino'
 import { Boom } from '@hapi/boom'
 import makeWASocket, {
-  Browsers,
   DisconnectReason,
   jidNormalizedUser,
   useMultiFileAuthState
@@ -20,6 +19,7 @@ const sessionPath = path.resolve('sessions', config.sessionName)
 let phoneNumber = null
 let pairingCodeRequested = false
 let reconnectTimer = null
+let reconnectAttempts = 0
 
 function cleanPhoneNumber(value = '') {
   return String(value).replace(/\D/g, '')
@@ -71,45 +71,46 @@ async function startNeroBot() {
     pairingCodeRequested = false
   }
 
-  // Baileys recomienda dejar la versión de WhatsApp Web en su valor predeterminado.
-  // Para vinculación por código se usa una identidad de navegador válida y lógica.
+  // Ultra Baileys obtiene automáticamente la versión activa de WhatsApp Web.
+  // No fijamos `version`, para permitir que el fork evite rechazos 405/428.
   const sock = makeWASocket({
     auth: state,
     logger,
-    browser: Browsers.macOS('Google Chrome'),
     printQRInTerminal: false,
     markOnlineOnConnect: false,
     syncFullHistory: false,
     generateHighQualityLinkPreview: true,
     connectTimeoutMs: 60_000,
     defaultQueryTimeoutMs: undefined,
-    keepAliveIntervalMs: 20_000
+    keepAliveIntervalMs: 10_000
   })
 
   sock.ev.on('creds.update', saveCreds)
 
-  sock.ev.on('connection.update', async update => {
-    const { connection, lastDisconnect, qr } = update
-
-    // Esperar a que WhatsApp entregue el evento QR indica que el socket ya está
-    // listo para comenzar el flujo de autenticación por código de teléfono.
-    if (needsPairing && qr && !pairingCodeRequested) {
-      pairingCodeRequested = true
-      try {
-        const code = await sock.requestPairingCode(phoneNumber)
-        console.log(`\n🔐 Código de vinculación de ${config.botName}: ${formatPairingCode(code)}\n`)
-        console.log('En WhatsApp: Dispositivos vinculados > Vincular un dispositivo > Vincular con número de teléfono.\n')
-        console.log('Mantén este proceso abierto hasta que aparezca el mensaje de conexión exitosa.\n')
-      } catch (error) {
-        pairingCodeRequested = false
-        const statusCode = new Boom(error)?.output?.statusCode
-        console.error(`❌ No se pudo generar el código${statusCode ? ` (HTTP ${statusCode})` : ''}:`, error?.message || error)
-        console.error('Borra sessions/principal y vuelve a intentar después de unos minutos. Evita varios intentos seguidos.')
-      }
+  // El fork documenta que el código puede solicitarse inmediatamente después
+  // de crear el socket. Un breve margen evita carreras durante el arranque.
+  if (needsPairing && !pairingCodeRequested) {
+    pairingCodeRequested = true
+    await new Promise(resolve => setTimeout(resolve, 1500))
+    try {
+      const code = await sock.requestPairingCode(phoneNumber)
+      console.log(`\n🔐 Código de vinculación de ${config.botName}: ${formatPairingCode(code)}\n`)
+      console.log('En WhatsApp: Dispositivos vinculados > Vincular un dispositivo > Vincular con número de teléfono.\n')
+      console.log('Mantén este proceso abierto hasta que aparezca el mensaje de conexión exitosa.\n')
+    } catch (error) {
+      pairingCodeRequested = false
+      const statusCode = new Boom(error)?.output?.statusCode
+      console.error(`❌ No se pudo generar el código${statusCode ? ` (HTTP ${statusCode})` : ''}:`, error?.message || error)
+      throw error
     }
+  }
+
+  sock.ev.on('connection.update', async update => {
+    const { connection, lastDisconnect } = update
 
     if (connection === 'open') {
       pairingCodeRequested = false
+      reconnectAttempts = 0
       phoneNumber = null
       console.log(`✅ ${config.botName} conectado como ${sock.user?.id || 'cuenta vinculada'}`)
       console.log(`📌 Tipo de instancia: ${config.instanceType === 'subbot' ? 'Subbot' : 'Bot principal'}`)
@@ -126,8 +127,12 @@ async function startNeroBot() {
         return
       }
 
-      // WhatsApp desconecta una vez después de vincular y Baileys debe iniciar
-      // un socket nuevo usando las credenciales recién guardadas.
+      reconnectAttempts += 1
+      if (needsPairing && [405, 428].includes(statusCode) && reconnectAttempts >= 2) {
+        console.error(`❌ WhatsApp rechazó la vinculación (${statusCode}). Se detuvo el bucle para evitar intentos repetidos.`)
+        return
+      }
+
       console.log(`⚠️ Conexión cerrada (${statusCode || 'sin código'}). Reconectando...`)
       scheduleReconnect()
     }

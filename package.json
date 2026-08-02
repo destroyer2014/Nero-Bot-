@@ -1,7 +1,7 @@
 {
   "name": "nero-bot",
-  "version": "1.0.2",
-  "description": "Nero Bot para WhatsApp con Baileys 7",
+  "version": "1.0.3",
+  "description": "Nero Bot para WhatsApp con Ultra Baileys",
   "type": "module",
   "main": "src/index.js",
   "scripts": {
@@ -13,7 +13,7 @@
   },
   "dependencies": {
     "@hapi/boom": "^10.0.1",
-    "@whiskeysockets/baileys": "7.0.0-rc13",
+    "@whiskeysockets/baileys": "github:russellxz/ultra-baileys#master",
     "pino": "^9.7.0"
   }
 }

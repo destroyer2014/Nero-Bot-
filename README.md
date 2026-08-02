@@ -89,3 +89,16 @@ También puedes definir el número sin interacción:
 ```bash
 NERO_PHONE=519XXXXXXXX npm start
 ```
+
+## Variante Ultra Baileys
+
+Esta versión usa el fork `russellxz/ultra-baileys` mediante un alias compatible con el nombre del paquete original. El fork obtiene automáticamente la versión activa de WhatsApp Web; por eso el socket no fija manualmente `version`.
+
+Antes de probar una vinculación nueva:
+
+```bash
+rm -rf sessions/principal
+rm -rf node_modules package-lock.json
+npm install
+npm start
+```
