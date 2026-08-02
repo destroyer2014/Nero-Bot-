@@ -1,0 +1,10 @@
+import { evoGet } from '../lib/api.js'
+const decode=s=>String(s||'').replace(/&amp;/g,'&').replace(/&#0?39;|&apos;/g,"'").replace(/&quot;/g,'"').replace(/&lt;/g,'<').replace(/&gt;/g,'>')
+const wrap=(name,aliases,fn)=>({name,aliases,async execute(ctx){try{await fn(ctx)}catch(e){await ctx.sock.sendMessage(ctx.chat,{text:`❌ ${e.message}`},{quoted:ctx.msg})}}})
+function mediaUrl(d){return d?.result||d?.url||d?.data?.url||d?.data?.result}
+export const animenews=wrap('animenews',['noticiasanime'],async ctx=>{const d=await evoGet('/anime/myanimelist/news',{limit:10});const text=(d.results||[]).map((x,i)=>`${i+1}. *${decode(x.title)}*\n${x.source_url}`).join('\n\n');await ctx.sock.sendMessage(ctx.chat,{text:`📰 *Noticias Anime*\n\n${text||'Sin noticias.'}`},{quoted:ctx.msg})})
+export const animeschedule=wrap('animeschedule',['horarioanime','estrenosanime'],async ctx=>{const d=await evoGet('/anime/livechart/schedule',{limit:20});const text=(d.results||[]).map((x,i)=>`${i+1}. *${decode(x.title)}*\n> ✐ ${x.episode||'Especial / sin número'}`).join('\n\n');await ctx.sock.sendMessage(ctx.chat,{text:`📅 *Calendario Anime*\n\n${text||'Sin emisiones.'}`},{quoted:ctx.msg})})
+export const neko=wrap('neko',[],async ctx=>{const d=await evoGet('/sfw/neko');const u=mediaUrl(d);if(!u)throw new Error('La API no entregó imagen.');await ctx.sock.sendMessage(ctx.chat,{image:{url:u},caption:'🐾 Neko aleatoria'},{quoted:ctx.msg})})
+export const bluearchive=wrap('bluearchive',['ba'],async ctx=>{const d=await evoGet('/sfw/bluearchive');const u=mediaUrl(d);if(!u)throw new Error('La API no entregó imagen.');await ctx.sock.sendMessage(ctx.chat,{image:{url:u},caption:'💙 Blue Archive'},{quoted:ctx.msg})})
+export const angry=wrap('angry',[],async ctx=>{const d=await evoGet('/sfw/rnd/v2',{type:'angry'});const u=mediaUrl(d);if(!u)throw new Error('La API no entregó reacción.');await ctx.sock.sendMessage(ctx.chat,{video:{url:u},gifPlayback:true,caption:'😡 Está muy enojado/a.'},{quoted:ctx.msg})})
+export const animeCommands=[animenews,animeschedule,neko,bluearchive,angry]

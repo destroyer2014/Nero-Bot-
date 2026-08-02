@@ -1,7 +1,7 @@
 {
   "name": "nero-bot",
-  "version": "1.4.5",
-  "description": "Nero Bot v1.4.5: diagnóstico de formatos nativos de WhatsApp para aislar el fallo de carruseles",
+  "version": "1.5.0",
+  "description": "Nero Bot v1.5.0: IA, anime, administración persistente, Anti-NSFW EvoGB, owner .vv y carrusel directo experimental con respaldo",
   "type": "module",
   "main": "src/index.js",
   "scripts": {

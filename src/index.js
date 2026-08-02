@@ -17,6 +17,7 @@ import { extractText } from './lib/text.js'
 import { findCommand } from './commands/index.js'
 import { getPermissionLevel, isOwner, isStaff, isSubOwner } from './lib/permissions.js'
 import { moderateIncoming } from './lib/nsfwGuard.js'
+import { getGroup } from './lib/groupStore.js'
 
 const logger = pino({ level: process.env.BAILEYS_LOG_LEVEL || 'silent' })
 const sessionPath = path.resolve('sessions', config.sessionName)
@@ -133,7 +134,7 @@ async function startNeroBot() {
     connectTimeoutMs: 60_000,
     defaultQueryTimeoutMs: undefined,
     keepAliveIntervalMs: 10_000,
-    browser: ['Nero Bot', 'Chrome', '1.4.5'],
+    browser: ['Nero Bot', 'Chrome', '1.5.0'],
     getMessage: async () => undefined
   })
 
@@ -190,6 +191,31 @@ async function startNeroBot() {
     }
   })
 
+
+  sock.ev.on('group-participants.update', async update => {
+    try {
+      const settings = getGroup(update.id)
+      if (!settings.welcome && !settings.goodbye) return
+      const metadata = await sock.groupMetadata(update.id).catch(() => null)
+      if (!metadata) return
+      for (const participant of update.participants || []) {
+        const isAdd = update.action === 'add'
+        const isRemove = update.action === 'remove'
+        if ((isAdd && !settings.welcome) || (isRemove && !settings.goodbye) || (!isAdd && !isRemove)) continue
+        const template = isAdd ? settings.welcomeText : settings.goodbyeText
+        const text = String(template || '')
+          .replaceAll('@user', `@${participant.split('@')[0]}`)
+          .replaceAll('@group', metadata.subject || 'el grupo')
+          .replaceAll('@members', String(metadata.participants?.length || 0))
+          .replaceAll('@date', new Date().toLocaleDateString('es-PE', { timeZone: config.timezone }))
+          .replaceAll('@time', new Date().toLocaleTimeString('es-PE', { timeZone: config.timezone, hour: '2-digit', minute: '2-digit' }))
+        const image = isAdd ? settings.welcomeImage : settings.goodbyeImage
+        if (image) await sock.sendMessage(update.id, { image: { url: image }, caption: text, mentions: [participant] })
+        else await sock.sendMessage(update.id, { text, mentions: [participant] })
+      }
+    } catch (error) { console.error('[BIENVENIDA]', error?.message || error) }
+  })
+
   sock.ev.on('messages.upsert', async ({ messages, type }) => {
     if (type !== 'notify') return
 
@@ -212,7 +238,7 @@ async function startNeroBot() {
         }
         const text = extractText(msg.message)
 
-        const wasModerated = await moderateIncoming({ sock, msg, chat, sender, isOwner: isOwner(sender), isSubOwner: isSubOwner(sender) })
+        const wasModerated = await moderateIncoming({ sock, msg, chat, sender, text, isOwner: isOwner(sender), isSubOwner: isSubOwner(sender) })
         if (wasModerated) continue
         if (!text.startsWith(config.prefix)) continue
 

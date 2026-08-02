@@ -1,32 +1,23 @@
 import { downloadMediaMessage, jidNormalizedUser } from '@itsliaaa/baileys'
+import { requireEvoGbApiKey } from './api.js'
+import { getGroup, getWarn, setWarn } from './groupStore.js'
 
-const enabledGroups=new Set()
-const warnings=new Map()
-const key=(g,u)=>`${g}:${u}`
 const mediaKinds=['imageMessage','videoMessage','stickerMessage']
+const linkRegex=/(https?:\/\/|www\.|chat\.whatsapp\.com\/|wa\.me\/|t\.me\/)/i
 
-export function setNsfw(chat,on){on?enabledGroups.add(chat):enabledGroups.delete(chat);return on}
-export function isNsfwEnabled(chat){return enabledGroups.has(chat)}
-export function getWarns(chat,user){return warnings.get(key(chat,user))||0}
-export function resetWarns(chat,user){warnings.delete(key(chat,user))}
+async function isAdmin(sock,chat,user){const metadata=await sock.groupMetadata(chat).catch(()=>null);if(!metadata)return {metadata:null,userAdmin:false,botAdmin:false};const p=metadata.participants.find(x=>jidNormalizedUser(x.id)===jidNormalizedUser(user));const botId=jidNormalizedUser(sock.user?.id||'');const bot=metadata.participants.find(x=>jidNormalizedUser(x.id)===botId);return {metadata,userAdmin:Boolean(p?.admin),botAdmin:Boolean(bot?.admin)}}
+async function punish({sock,msg,chat,sender,reason,detail=''}){await sock.sendMessage(chat,{delete:msg.key}).catch(()=>{});const count=setWarn(chat,sender,getWarn(chat,sender)+1);const mention=`@${sender.split('@')[0]}`;if(count>=3){await sock.sendMessage(chat,{text:`🚫 *Usuario expulsado*\n\nUsuario: ${mention}\nMotivo: acumuló 3 advertencias.\nÚltima infracción: ${reason}`,mentions:[sender]});await sock.groupParticipantsUpdate(chat,[sender],'remove').catch(()=>{});setWarn(chat,sender,0)}else await sock.sendMessage(chat,{text:`⚠️ *Mensaje eliminado*\n\nUsuario: ${mention}\nMotivo: ${reason}${detail?`\n${detail}`:''}\nAdvertencias: ${count}/3`,mentions:[sender]});return true}
+function scoreFromEvo(data){const scores=Array.isArray(data?.raw_scores)?data.raw_scores:[];const wanted=scores.filter(x=>['porn','hentai','sexy'].includes(String(x.className||'').toLowerCase())).map(x=>Number(x.number??(Number(x.original||0)*100))).filter(Number.isFinite);return wanted.length?Math.max(...wanted):0}
+async function scanEvo(buffer,filename){const key=requireEvoGbApiKey();const base=process.env.EVOGB_API_BASE_URL||'https://api.evogb.org';const url=new URL('/nsfw/detect',base);url.searchParams.set('key',key);const form=new FormData();form.append('file',new Blob([buffer]),filename);const controller=new AbortController();const timer=setTimeout(()=>controller.abort(),90000);try{const r=await fetch(url,{method:'POST',body:form,signal:controller.signal});const raw=await r.text();let d;try{d=JSON.parse(raw)}catch{throw new Error(raw.slice(0,200)||`HTTP ${r.status}`)}if(!r.ok||d.status===false)throw new Error(d.message||`HTTP ${r.status}`);return d}finally{clearTimeout(timer)}}
 
-export async function moderateIncoming({sock,msg,chat,sender,isOwner,isSubOwner}){
- if(!chat?.endsWith('@g.us')||!enabledGroups.has(chat)||isOwner||isSubOwner)return false
+export async function moderateIncoming({sock,msg,chat,sender,isOwner,isSubOwner,text=''}){
+ if(!chat?.endsWith('@g.us')||isOwner||isSubOwner)return false
+ const settings=getGroup(chat);if(!settings.antiNsfw&&!settings.antiLink)return false
+ const perms=await isAdmin(sock,chat,sender);if(perms.userAdmin||!perms.botAdmin)return false
+ if(settings.antiLink&&linkRegex.test(text||''))return punish({sock,msg,chat,sender,reason:'enlace no permitido'})
+ if(!settings.antiNsfw)return false
  const type=Object.keys(msg.message||{}).find(x=>mediaKinds.includes(x));if(!type)return false
- const metadata=await sock.groupMetadata(chat).catch(()=>null);if(!metadata)return false
- const participant=metadata.participants.find(p=>jidNormalizedUser(p.id)===sender)
- if(participant?.admin)return false
- const botId=jidNormalizedUser(sock.user?.id||'');const bot=metadata.participants.find(p=>jidNormalizedUser(p.id)===botId)
- if(!bot?.admin)return false
  let buffer;try{buffer=await downloadMediaMessage(msg,'buffer',{}, {logger:console,reuploadRequest:sock.updateMediaMessage})}catch{return false}
  if(!buffer)return false
- const form=new FormData();form.append('file',new Blob([buffer]),type==='videoMessage'?'media.mp4':type==='stickerMessage'?'sticker.webp':'imagen.jpg')
- let data;try{const r=await fetch('https://nsfwsky.ultraplus.click/api/v1/check',{method:'POST',body:form});data=await r.json();if(!r.ok||!data.ok)return false}catch{return false}
- if(!data.is_nsfw||Number(data.nsfw_percent||data.percent||0)<70)return false
- await sock.sendMessage(chat,{delete:msg.key}).catch(()=>{})
- const count=getWarns(chat,sender)+1;warnings.set(key(chat,sender),count)
- const mention=`@${sender.split('@')[0]}`
- if(count>=3){await sock.sendMessage(chat,{text:`🚫 *Usuario expulsado*\n\nUsuario: ${mention}\nMotivo: acumuló 3 advertencias por contenido NSFW.`,mentions:[sender]});await sock.groupParticipantsUpdate(chat,[sender],'remove').catch(()=>{});warnings.delete(key(chat,sender))}
- else await sock.sendMessage(chat,{text:`⚠️ *Contenido eliminado*\n\nUsuario: ${mention}\nMotivo: contenido NSFW\nDetección: ${Number(data.nsfw_percent||data.percent).toFixed(2)}%\nAdvertencias: ${count}/3\n\nAl llegar a 3 advertencias serás expulsado del grupo.`,mentions:[sender]})
- return true
+ try{const data=await scanEvo(buffer,type==='videoMessage'?'media.mp4':type==='stickerMessage'?'sticker.webp':'imagen.jpg');const score=scoreFromEvo(data);const flagged=Boolean(data.analysis?.is_nsfw);if(score<70&&!flagged)return false;if(score<70)return false;return punish({sock,msg,chat,sender,reason:'contenido NSFW',detail:`Detección: ${score.toFixed(2)}%`})}catch(error){console.warn('[ANTI-NSFW] EvoGB no respondió:',error?.message||error);return false}
 }

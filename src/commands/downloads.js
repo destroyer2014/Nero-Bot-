@@ -369,49 +369,49 @@ export const tiktokSearch={name:'tiktoksearch',aliases:['ttsearch'],async execut
   const input=queryText(ctx.args)
   if(!input)throw new Error(usage('tiktoksearch','<búsqueda>'))
   const response=await evoGet('/search/tiktok',{query:input})
-  const list=(response.data||[]).slice(0,8)
+  const list=(response.data||[]).slice(0,10)
   if(!list.length)throw new Error('No encontré resultados en TikTok.')
 
-  const cards=[]
-  for(const [index,item] of list.entries()){
+  const cards=list.map((item,index)=>{
     const username=item.author?.unique_id||'usuario'
     const original=`https://www.tiktok.com/@${username}/video/${item.id}`
-    const command=`${config.prefix}tiktok ${original}`
     const stats=item.stats||{}
-    let cover
-    try{cover=await fetchImageBuffer(item.cover)}catch(error){
-      console.warn(`TikTok Search: portada ${index+1} inválida:`,error?.message||error)
-      cover=await getFallbackTikTokCover()
+    return {
+      image:{url:item.cover},
+      title:`TikTok • ${index+1}`,
+      body:[`*${(item.title||'Sin título').slice(0,150)}*`,`Autor: @${username}`,`Duración: ${item.duration||'--'}`,`❤️ ${stats.likes||0}  💬 ${stats.comments||0}  ▶️ ${stats.views||0}`].join('\n'),
+      footer:'Nero Bot',
+      buttons:[quickReply('Descargar',`${config.prefix}tiktok ${original}`)]
     }
-    cards.push({
-      title:`TikTok • Resultado ${index+1}`,
-      image:cover,
-      body:[
-        `*Título:* ${(item.title||'Sin título').slice(0,180)}`,
-        `*Duración:* ${item.duration||'--'}`,
-        `*Autor:* @${username}`,
-        `*Likes:* ${stats.likes||0}`,
-        `*Comentarios:* ${stats.comments||0}`,
-        `*Shares:* ${stats.shares||0}`,
-        `*Reproducciones:* ${stats.views||0}`
-      ].join('\n'),
-      buttons:[copyButton('Copiar comando',command)]
-    })
-  }
+  })
 
+  // Carrusel nativo del fork: sock.sendMessage({ cards }). Algunas cuentas lo
+  // renderizan y otras lo descartan silenciosamente, por eso siempre dejamos
+  // debajo una lista interactiva estable como respaldo.
   try{
-    const sent=await sendCarousel(ctx.sock,ctx.chat,{body:`🎵 *TikTok Buscador*\nResultados para: *${input}*`,cards})
-    if(!sent?.key?.id) throw new Error('El carrusel no devolvió confirmación de envío.')
-  }catch(error){
-    console.error('TikTok Search: carrusel rechazado:',error)
-    const lines=list.slice(0,10).map((item,index)=>{
-      const username=item.author?.unique_id||'usuario'
-      const original=`https://www.tiktok.com/@${username}/video/${item.id}`
-      return `${index+1}. *${(item.title||'Sin título').slice(0,90)}*\n@${username} • ${item.duration||'--'}\n${config.prefix}tiktok ${original}`
-    }).join('\n\n')
-    await ctx.sock.sendMessage(ctx.chat,{text:`🎵 *TikTok Buscador*\nResultados para: *${input}*\n\n${lines}\n\n⚠️ WhatsApp rechazó el carrusel; envié una lista compatible.`},{quoted:ctx.msg})
-  }
+    await ctx.sock.sendMessage(ctx.chat,{
+      title:'TikTok Buscador',
+      text:`*TikTok Buscador*\nResultados para: *${input}*`,
+      footer:'Nero Bot',
+      cards
+    })
+  }catch(error){console.warn('[CARDS DIRECTO] No compatible:',error?.message||error)}
+
+  const rows=list.map((item,index)=>{
+    const username=item.author?.unique_id||'usuario'
+    const original=`https://www.tiktok.com/@${username}/video/${item.id}`
+    return {title:`${index+1}. ${(item.title||'Sin título').slice(0,55)}`,description:`@${username} • ${item.duration||'--'}`,id:`${config.prefix}tiktok ${original}`}
+  })
+  await sendInteractive(ctx.sock,ctx.chat,{title:'TikTok Buscador',body:`Resultados para: *${input}*\n\nSi tu WhatsApp no muestra el carrusel, usa la lista.`,footer:'Nero Bot',media:list[0]?.cover?{image:{url:list[0].cover}}:null,buttons:[singleSelect('Ver resultados',[{title:'TikTok',rows}])]},ctx.msg)
 })}}
+
+export const testcards={name:'testcards',aliases:[],async execute(ctx){return apiTask(ctx,async()=>{
+  await ctx.sock.sendMessage(ctx.chat,{title:'Prueba Cards',text:'Carrusel directo del fork.',footer:'Nero Bot',cards:[
+    {image:{url:'https://picsum.photos/seed/nero1/640/640'},title:'Tarjeta 1',body:'Prueba de carrusel directo.',footer:'Nero Bot',buttons:[quickReply('Menú',`${config.prefix}menu`)]},
+    {image:{url:'https://picsum.photos/seed/nero2/640/640'},title:'Tarjeta 2',body:'Si ves esto, cards funciona.',footer:'Nero Bot',buttons:[quickReply('Ping',`${config.prefix}ping`)]}
+  ]})
+})}}
+
 
 
 export const terabox={name:'terabox',aliases:['tb'],async execute(ctx){return apiTask(ctx,async()=>{const url=ctx.args[0];if(!isLikelyUrl(url))throw new Error(usage('terabox','<enlace>'));const d=await apiGet('/terabox',{url,limit:50});const files=d.files||[];if(!files.length)throw new Error('No encontré archivos en TeraBox.');const token=saveSelection('terabox',files);const rows=files.slice(0,10).map((f,i)=>({header:'Archivo',title:f.file_name.slice(0,90),description:formatBytes(f.size_bytes),id:`${config.prefix}teraboxpick ${token} ${i}`}));await sendInteractive(ctx.sock,ctx.chat,{title:'TeraBox Downloader',body:`Se encontraron ${files.length} archivo(s).`,media:files[0].thumb?{image:{url:files[0].thumb}}:null,buttons:[singleSelect('Seleccionar',[{title:'Archivos',rows}])]},ctx.msg)})}}
@@ -497,4 +497,4 @@ export const queueStatus={name:'cola',aliases:['queue'],async execute(ctx){await
 export const cancelDownload={name:'cancelardescarga',aliases:['cancelardl'],async execute(ctx){const removed=cancelUserJobs(ctx.sender);await ctx.sock.sendMessage(ctx.chat,{text:removed?`✅ Se cancelaron ${removed} descarga(s) tuyas en espera.`:'No tienes descargas esperando en la cola.'},{quoted:ctx.msg})}}
 export const clearQueue={name:'limpiarcola',aliases:['clearqueue'],async execute(ctx){if(!ctx.isStaff)throw new Error('Este comando es solo para owner y subowner.');const removed=clearWaitingQueues();await ctx.sock.sendMessage(ctx.chat,{text:`✅ Cola limpiada. Solicitudes eliminadas: ${removed}.`},{quoted:ctx.msg})}}
 
-export const downloadCommands=[play,playpick,ytmp3,ytmp4,spotify,spotifypick,ytmusic,ytmusicpick,apk,apkpick,apkmod,apkmodpick,facebook,instagram,twitch,threads,universal,pinterest,pinterestSearch,stickerSearch,stickerPack,tiktok,tiktokSearch,mediafire,mega,terabox,teraboxpick,anime,queueStatus,cancelDownload,clearQueue]
+export const downloadCommands=[play,playpick,ytmp3,ytmp4,spotify,spotifypick,ytmusic,ytmusicpick,apk,apkpick,apkmod,apkmodpick,facebook,instagram,twitch,threads,universal,pinterest,pinterestSearch,stickerSearch,stickerPack,tiktok,tiktokSearch,testcards,mediafire,mega,terabox,teraboxpick,anime,queueStatus,cancelDownload,clearQueue]
