@@ -5,6 +5,7 @@ import { formatBytes, formatDuration, isLikelyUrl, pickDownloadUrl, sendImageAlb
 import { cancelUserJobs, clearWaitingQueues, formatQueueStatus, runDownloadJob } from '../lib/downloadQueue.js'
 import { getSelection, saveSelection } from '../lib/selectionCache.js'
 import sharp from 'sharp'
+import Webpmux from 'node-webpmux'
 
 const usage = (name, value) => `Uso: *${config.prefix}${name} ${value}*`
 const queryText = args => args.join(' ').trim()
@@ -148,17 +149,43 @@ export const ytmusicpick={name:'ytmusicpick',aliases:[],async execute(ctx){retur
 async function apkSearch(ctx, mod=false){
   const q=queryText(ctx.args); if(!q) throw new Error(usage(mod?'apkmod':'apk','<nombre>'))
   const endpoint=mod?'/apkmoddl':'/apkdl'; const results=[]
-  for(let pick=1;pick<=5;pick++) { try { const d=await apiGet(endpoint,mod?{q,pick}:{mode:'link',q,pick,prefer:'auto',lang:'es'}); if(d?.title&&!results.some(x=>x.title===d.title&&x.version===d.version)) results.push(d) } catch { break } }
+  for(let pick=1;pick<=5;pick++) { try { const d=await apiGet(endpoint,mod?{q,pick}:{mode:'link',q,pick,prefer:'auto',lang:'es'}); if(d?.title&&!results.some(x=>x.title===d.title&&x.version===d.version)) results.push({...d,_searchQuery:q,_pick:pick}) } catch { break } }
   if(!results.length) throw new Error('No encontré aplicaciones.')
   const token=saveSelection(mod?'apkmod':'apk',results); const rows=results.map((r,i)=>({header:mod?'APK MOD':'APK',title:r.title.slice(0,80),description:`v${r.version||'?'} • ${r.filesize||formatBytes(r.size_bytes)}`,id:`${config.prefix}${mod?'apkmodpick':'apkpick'} ${token} ${i}`}))
   await sendInteractive(ctx.sock,ctx.chat,{title:mod?'Resultados APK MOD':'Resultados APK',body:`Búsqueda: *${q}*\nSelecciona una aplicación.`,media:results[0].icon?{image:{url:results[0].icon}}:null,buttons:[singleSelect('Ver resultados',[{title:mod?'Aplicaciones modificadas':'Aplicaciones',rows}])]},ctx.msg)
 }
 async function apkPick(ctx,mod=false){
-  const list=getSelection(ctx.args[0],mod?'apkmod':'apk'); const d=list?.[Number(ctx.args[1])]; if(!d) throw new Error('La selección venció. Busca nuevamente.')
+  const list=getSelection(ctx.args[0],mod?'apkmod':'apk'); let d=list?.[Number(ctx.args[1])]; if(!d) throw new Error('La selección venció. Busca nuevamente.')
+  const endpoint=mod?'/apkmoddl':'/apkdl'
+  if(d._searchQuery&&d._pick){
+    try{
+      const fresh=await apiGet(endpoint,mod?{q:d._searchQuery,pick:d._pick}:{mode:'link',q:d._searchQuery,pick:d._pick,prefer:'auto',lang:'es'},{timeoutMs:180000})
+      d={...d,...fresh,_searchQuery:d._searchQuery,_pick:d._pick}
+    }catch(error){ console.warn('APK: no se pudo renovar el enlace:',error?.message||error) }
+  }
   const size=Number(d.size_bytes||d.filesize_bytes||0); const details=[`*Título:* ${d.title}`,`*Versión:* ${d.version||'No disponible'}`,`*Formato:* ${d.format||'APK'}`,`*Tamaño:* ${size ? formatBytes(size) : (d.filesize || 'No disponible')}`,`*Android:* ${d.requirements||'No disponible'}`,`*Actualizado:* ${d.published_at||'No disponible'}`,`*Desarrollador:* ${d.developer||'No disponible'}`]
   if(mod){ if(d.mod_features?.length) details.push(`*Funciones MOD:* ${d.mod_features.join(', ')}`); if(d.mod_changes?.length) details.push(`*Cambios MOD:* ${d.mod_changes.join(', ')}`) }
   await ctx.sock.sendMessage(ctx.chat,{image:d.icon?{url:d.icon}:undefined,text:d.icon?undefined:details.join('\n'),caption:d.icon?details.join('\n'):undefined},{quoted:ctx.msg})
-  await runDownloadJob(ctx,'heavy',mod?'.apkmod':'.apk',()=>sendRemoteMedia(ctx.sock,ctx.chat,{...d,mime_type:(d.filename||'').toLowerCase().endsWith('.apk')?'application/vnd.android.package-archive':undefined},{quoted:ctx.msg,caption:`${mod?'APK MOD':'APK'} • ${d.title}`,forceDocument:true}))
+  await runDownloadJob(ctx,'heavy',mod?'.apkmod':'.apk',async()=>{
+    let url=pickDownloadUrl(d)
+    if(!url) throw new Error('La API no entregó un enlace de descarga para el APK.')
+    let file
+    try{ file=await fetchBinaryFile(url) }catch(firstError){
+      if(!d._searchQuery||!d._pick) throw firstError
+      const fresh=await apiGet(endpoint,mod?{q:d._searchQuery,pick:d._pick}:{mode:'link',q:d._searchQuery,pick:d._pick,prefer:'auto',lang:'es'},{timeoutMs:180000})
+      url=pickDownloadUrl(fresh)
+      if(!url) throw new Error('La API renovó el resultado pero no entregó el APK.')
+      file=await fetchBinaryFile(url)
+      d={...d,...fresh}
+    }
+    const filename=(d.filename||`${d.title||'aplicacion'}.apk`).replace(/[\/:*?"<>|]+/g,'_')
+    await ctx.sock.sendMessage(ctx.chat,{
+      document:file.buffer,
+      mimetype:'application/vnd.android.package-archive',
+      fileName:filename.toLowerCase().endsWith('.apk')?filename:`${filename}.apk`,
+      caption:`${mod?'APK MOD':'APK'} • ${d.title}`
+    },{quoted:ctx.msg})
+  })
 }
 export const apk={name:'apk',aliases:['apkdl'],async execute(ctx){return apiTask(ctx,()=>apkSearch(ctx,false))}}
 export const apkpick={name:'apkpick',aliases:[],async execute(ctx){return apiTask(ctx,()=>apkPick(ctx,false))}}
@@ -207,6 +234,45 @@ export const stickerSearch={name:'stickersearch',aliases:['stickerssearch','stic
 
 const wait = ms => new Promise(resolve => setTimeout(resolve, ms))
 
+async function applyStickerPackMeta(buffer, packname, author) {
+  const image = new Webpmux.Image()
+  await image.load(buffer)
+  const metadata = {
+    'sticker-pack-id': `nero-${Date.now()}`,
+    'sticker-pack-name': packname || 'Nero Bot',
+    'sticker-pack-publisher': author || 'ArcadiaCorps',
+    emojis: ['✨']
+  }
+  const exifHeader = Buffer.from([
+    0x49,0x49,0x2a,0x00,0x08,0x00,0x00,0x00,0x01,0x00,0x41,0x57,
+    0x07,0x00,0x00,0x00,0x00,0x00,0x16,0x00,0x00,0x00
+  ])
+  const json = Buffer.from(JSON.stringify(metadata), 'utf8')
+  exifHeader.writeUIntLE(json.length, 14, 4)
+  image.exif = Buffer.concat([exifHeader, json])
+  return image.save(null)
+}
+
+async function fetchBinaryFile(url, timeoutMs = 180000) {
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), timeoutMs)
+  try {
+    const response = await fetch(url, {
+      signal: controller.signal,
+      redirect: 'follow',
+      headers: {
+        'user-agent': 'Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 Chrome/124 Mobile Safari/537.36',
+        accept: '*/*',
+        referer: new URL(url).origin + '/'
+      }
+    })
+    if (!response.ok) throw new Error(`HTTP ${response.status}`)
+    const buffer = Buffer.from(await response.arrayBuffer())
+    if (!buffer.length) throw new Error('Archivo vacío')
+    return { buffer, contentType: response.headers.get('content-type') || '' }
+  } finally { clearTimeout(timer) }
+}
+
 export const stickerPack={name:'stickerpack',aliases:['stickerdetail'],async execute(ctx){return apiTask(ctx,async()=>{
   const [token,indexRaw]=ctx.args
   const list=getSelection(token,'stickerly-pack')
@@ -217,12 +283,14 @@ export const stickerPack={name:'stickerpack',aliases:['stickerdetail'],async exe
   const response=await evoGet('/stickerly/detail',{url:selected.url},{timeoutMs:120000})
   const detail=response.detalles||response.details||response.data||{}
   const stickers=Array.isArray(detail.stickers)?detail.stickers.slice(0,30):[]
+  const packName=detail.name||selected.name||'Sticker.ly'
+  const packAuthor=detail.author?.name||detail.author?.username||selected.author||'Nero Bot'
   if(!stickers.length)throw new Error('El paquete no contiene stickers descargables.')
 
   await ctx.sock.sendMessage(ctx.chat,{text:[
     '⏳ *Descargando paquete de Sticker.ly*',
-    `Paquete: ${detail.name||selected.name||'Sin nombre'}`,
-    `Autor: ${detail.author?.name||detail.author?.username||selected.author||'Desconocido'}`,
+    `Paquete: ${packName}`,
+    `Autor: ${packAuthor}`,
     `Stickers: ${stickers.length}`
   ].join('\n')},{quoted:ctx.msg})
 
@@ -235,7 +303,8 @@ export const stickerPack={name:'stickerpack',aliases:['stickerdetail'],async exe
       if(!response.ok)throw new Error(`HTTP ${response.status}`)
       const buffer=Buffer.from(await response.arrayBuffer())
       if(!buffer.length)throw new Error('Sticker vacío')
-      await ctx.sock.sendMessage(ctx.chat,{sticker:buffer},{quoted:sent===0?ctx.msg:undefined})
+      const stickerBuffer=await applyStickerPackMeta(buffer,packName,packAuthor)
+      await ctx.sock.sendMessage(ctx.chat,{sticker:stickerBuffer},{quoted:sent===0?ctx.msg:undefined})
       sent+=1
       await wait(450)
     }catch(error){
@@ -245,7 +314,7 @@ export const stickerPack={name:'stickerpack',aliases:['stickerdetail'],async exe
   }
 
   if(!sent)throw new Error('No se pudo enviar ningún sticker del paquete.')
-  await ctx.sock.sendMessage(ctx.chat,{text:`✅ *Paquete enviado*\nEnviados: ${sent}/${stickers.length}${failed?`\nFallidos: ${failed}`:''}`},{quoted:ctx.msg})
+  await ctx.sock.sendMessage(ctx.chat,{text:`✅ *Paquete importado*\nNombre: ${packName}\nAutor: ${packAuthor}\nEnviados: ${sent}/${stickers.length}${failed?`\nFallidos: ${failed}`:''}`},{quoted:ctx.msg})
 })}}
 
 
@@ -286,7 +355,8 @@ export const tiktokSearch={name:'tiktoksearch',aliases:['ttsearch'],async execut
   }
 
   try{
-    await sendCarousel(ctx.sock,ctx.chat,{body:`🎵 *TikTok Buscador*\nResultados para: *${input}*`,cards},ctx.msg)
+    const sent=await sendCarousel(ctx.sock,ctx.chat,{body:`🎵 *TikTok Buscador*\nResultados para: *${input}*`,cards},ctx.msg)
+    if(!sent?.key?.id) throw new Error('El carrusel no devolvió confirmación de envío.')
   }catch(error){
     console.error('TikTok Search: carrusel rechazado:',error)
     const lines=list.slice(0,10).map((item,index)=>{

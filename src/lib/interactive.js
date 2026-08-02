@@ -1,8 +1,8 @@
 import {
   generateWAMessageFromContent,
   prepareWAMessageMedia,
-  proto
-} from '@whiskeysockets/baileys'
+  WAProto as proto
+} from '@itsliaaa/baileys'
 
 function normalizeButtons(buttons = []) {
   return buttons.map(button => {
