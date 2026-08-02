@@ -36,3 +36,20 @@ No subas `.env` ni `sessions/` a GitHub.
 - `.anime <nombre> [episodio]`
 
 Los archivos superiores a `MAX_UPLOAD_BYTES` se entregan como enlace para evitar fallos de WhatsApp.
+
+## Colas de descarga
+
+Nero Bot usa dos colas independientes:
+
+- **Ligera:** Spotify, YouTube Music y audio de YouTube.
+- **Pesada:** videos, APK/XAPK, MediaFire, MEGA, TeraBox, Twitch y descargas universales.
+
+Comandos:
+
+```text
+.cola
+.cancelardescarga
+.limpiarcola   # owner/subowner
+```
+
+Las búsquedas no bloquean la cola; solo la entrega del archivo.

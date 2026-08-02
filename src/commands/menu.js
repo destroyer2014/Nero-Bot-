@@ -49,7 +49,12 @@ export const command = {
       `┃ ${config.prefix}mediafire <url>`,
       `┃ ${config.prefix}mega <url>`,
       `┃ ${config.prefix}terabox <url>`,
-      `┃ ${config.prefix}anime <nombre>`,
+      `┃ ${config.prefix}anime <nombre> [episodio]`,
+      '┃',
+      '┃ *COLAS*',
+      `┃ ${config.prefix}cola`,
+      `┃ ${config.prefix}cancelardescarga`,
+      `┃ ${config.prefix}limpiarcola (staff)`,
       '╰━━━━━━━━━━━━━━━━⬣'
     ].join('\n')
 

@@ -1,7 +1,8 @@
 import config from '../../config.js'
 import { apiGet, ApiError } from '../lib/api.js'
 import { sendInteractive, quickReply, singleSelect, urlButton } from '../lib/interactive.js'
-import { formatBytes, formatDuration, isLikelyUrl, pickDownloadUrl, sendRemoteMedia } from '../lib/media.js'
+import { formatBytes, formatDuration, isLikelyUrl, sendImageAlbum, sendRemoteMedia } from '../lib/media.js'
+import { cancelUserJobs, clearWaitingQueues, formatQueueStatus, runDownloadJob } from '../lib/downloadQueue.js'
 import { getSelection, saveSelection } from '../lib/selectionCache.js'
 
 const usage = (name, value) => `Uso: *${config.prefix}${name} ${value}*`
@@ -27,7 +28,8 @@ async function apiTask(ctx, fn) {
 
 async function directMedia(ctx, endpoint, params, captionBuilder = null, options = {}) {
   const data = await apiGet(endpoint, params, options)
-  const item = data.selected || data.result || data.primary_media || data
+  const nested = data.selected || data.result || data.primary_media || {}
+  const item = { ...data, ...nested, selected: data.selected, result: data.result }
   const caption = captionBuilder ? captionBuilder(data, item) : `*${data.title || item.title || config.botName}*`
   await sendRemoteMedia(ctx.sock, ctx.chat, item, { quoted: ctx.msg, caption, forceDocument: options.forceDocument })
 }
@@ -57,35 +59,35 @@ export const playpick = { name:'playpick', aliases:[], async execute(ctx) { retu
 
 export const ytmp3={name:'ytmp3',aliases:['ytaudio'],async execute(ctx){return apiTask(ctx,async()=>{
   const url=ctx.args[0]; if(!isLikelyUrl(url)) throw new Error(usage('ytmp3','<enlace de YouTube>'))
-  await directMedia(ctx,'/ytmp3',{mode:'link',url},(d)=>`🎵 *${d.title||'Audio de YouTube'}*\n📦 ${d.size_mb?`${d.size_mb} MB`:'Tamaño no disponible'}\n🎧 ${d.quality||'M4A'}`)
+  await runDownloadJob(ctx,'light','.ytmp3',()=>directMedia(ctx,'/ytmp3',{mode:'link',url},(d)=>`🎵 *${d.title||'Audio de YouTube'}*\n📦 ${d.size_mb?`${d.size_mb} MB`:'Tamaño no disponible'}\n🎧 ${d.quality||'M4A'}`))
 })}}
 export const ytmp4={name:'ytmp4',aliases:['ytvideo'],async execute(ctx){return apiTask(ctx,async()=>{
   const url=ctx.args[0]; const quality=ctx.args[1]||'360p'; if(!isLikelyUrl(url)) throw new Error(usage('ytmp4','<enlace> [360p]'))
-  await directMedia(ctx,'/ytmp4',{mode:'link',url,quality},d=>`🎬 *${d.title||'Video de YouTube'}*\n📺 Calidad: ${d.quality||quality}`)
+  await runDownloadJob(ctx,'heavy','.ytmp4',()=>directMedia(ctx,'/ytmp4',{mode:'link',url,quality},d=>`🎬 *${d.title||'Video de YouTube'}*\n📺 Calidad: ${d.quality||quality}`))
 })}}
 
 export const spotify={name:'spotify',aliases:['sp'],async execute(ctx){return apiTask(ctx,async()=>{
   const input=queryText(ctx.args); if(!input) throw new Error(usage('spotify','<nombre o enlace>'))
-  if(isLikelyUrl(input)) return directMedia(ctx,'/spotify',{mode:'link',url:input},d=>`🎵 *${d.title||'Spotify'}*\n👤 ${d.artist||''}\n📦 ${d.format||'MP3'}`)
+  if(isLikelyUrl(input)) return runDownloadJob(ctx,'light','.spotify',()=>directMedia(ctx,'/spotify',{mode:'link',url:input},d=>`🎵 *${d.title||'Spotify'}*\n👤 ${d.artist||''}\n📦 ${d.format||'MP3'}`))
   const data=await apiGet('/spotifysearch',{q:input,limit:20,lang:'es18'}); const list=data.tracks||data.results||[]; if(!list.length) throw new Error('No encontré canciones en Spotify.')
   const token=saveSelection('spotify',list); const rows=list.slice(0,10).map((r,i)=>({header:'Audio',title:`${r.artist||'Artista'} — ${r.title||r.name}`.slice(0,90),description:'Descargar canción',id:`${config.prefix}spotifypick ${token} ${i}`}))
   await sendInteractive(ctx.sock,ctx.chat,{title:'Spotify Downloader',body:`Resultados: *${input}*\nSelecciona una canción.`,media:list[0]?.thumbnail?{image:{url:list[0].thumbnail}}:null,buttons:[singleSelect('Seleccionar',[{title:'Canciones',rows}])]},ctx.msg)
 })}}
 export const spotifypick={name:'spotifypick',aliases:[],async execute(ctx){return apiTask(ctx,async()=>{
   const list=getSelection(ctx.args[0],'spotify'); const item=list?.[Number(ctx.args[1])]; if(!item) throw new Error('La selección venció. Ejecuta .spotify nuevamente.')
-  const url=item.spotify_url||item.song_url||spotifyTrackUrl(item.id); await directMedia(ctx,'/spotify',{mode:'link',url},d=>`🎵 *${d.title||item.title}*\n👤 ${d.artist||item.artist||''}\n📦 ${d.format||'MP3'}`)
+  const url=item.spotify_url||item.song_url||spotifyTrackUrl(item.id); await runDownloadJob(ctx,'light','.spotify',()=>directMedia(ctx,'/spotify',{mode:'link',url},d=>`🎵 *${d.title||item.title}*\n👤 ${d.artist||item.artist||''}\n📦 ${d.format||'MP3'}`))
 })}}
 
 export const ytmusic={name:'ytmusic',aliases:['ytm'],async execute(ctx){return apiTask(ctx,async()=>{
   const input=queryText(ctx.args); if(!input) throw new Error(usage('ytmusic','<nombre o enlace>'))
-  if(isLikelyUrl(input)) return directMedia(ctx,'/ytmusic/download',{mode:'link',url:input},d=>`🎵 *${d.title||'YouTube Music'}*\n📦 ${d.size_mb?`${d.size_mb} MB`:d.format||'M4A'}`)
+  if(isLikelyUrl(input)) return runDownloadJob(ctx,'light','.ytmusic',()=>directMedia(ctx,'/ytmusic/download',{mode:'link',url:input},d=>`🎵 *${d.title||'YouTube Music'}*\n📦 ${d.size_mb?`${d.size_mb} MB`:d.format||'M4A'}`))
   const data=await apiGet('/ytmusic/search',{q:input,limit:10}); const list=data.results||[]; if(!list.length) throw new Error('No encontré canciones en YouTube Music.')
   const token=saveSelection('ytmusic',list); const rows=list.map((r,i)=>({header:'Audio',title:`${r.artist||'Artista'} — ${r.title}`.slice(0,90),description:`${r.album||''} ${r.duration?`• ${r.duration}`:''}`.trim(),id:`${config.prefix}ytmusicpick ${token} ${i}`}))
   await sendInteractive(ctx.sock,ctx.chat,{title:'YouTube Music',body:`Resultados: *${input}*\nSelecciona una canción.`,media:list[0]?.thumbnail?{image:{url:list[0].thumbnail}}:null,buttons:[singleSelect('Seleccionar',[{title:'Canciones',rows}])]},ctx.msg)
 })}}
 export const ytmusicpick={name:'ytmusicpick',aliases:[],async execute(ctx){return apiTask(ctx,async()=>{
   const list=getSelection(ctx.args[0],'ytmusic'); const item=list?.[Number(ctx.args[1])]; if(!item) throw new Error('La selección venció. Ejecuta .ytmusic nuevamente.')
-  await directMedia(ctx,'/ytmusic/download',{mode:'link',url:item.music_url||musicUrl(item.video_id)},d=>`🎵 *${d.title||item.title}*\n👤 ${item.artist||''}\n💿 ${item.album||''}`)
+  await runDownloadJob(ctx,'light','.ytmusic',()=>directMedia(ctx,'/ytmusic/download',{mode:'link',url:item.music_url||musicUrl(item.video_id)},d=>`🎵 *${d.title||item.title}*\n👤 ${item.artist||''}\n💿 ${item.album||''}`))
 })}}
 
 async function apkSearch(ctx, mod=false){
@@ -98,30 +100,35 @@ async function apkSearch(ctx, mod=false){
 }
 async function apkPick(ctx,mod=false){
   const list=getSelection(ctx.args[0],mod?'apkmod':'apk'); const d=list?.[Number(ctx.args[1])]; if(!d) throw new Error('La selección venció. Busca nuevamente.')
-  const size=Number(d.size_bytes||d.filesize_bytes||0); const details=[`*Título:* ${d.title}`,`*Versión:* ${d.version||'No disponible'}`,`*Formato:* ${d.format||'APK'}`,`*Tamaño:* ${d.filesize||formatBytes(size)}`,`*Android:* ${d.requirements||'No disponible'}`,`*Actualizado:* ${d.published_at||'No disponible'}`,`*Desarrollador:* ${d.developer||'No disponible'}`]
+  const size=Number(d.size_bytes||d.filesize_bytes||0); const details=[`*Título:* ${d.title}`,`*Versión:* ${d.version||'No disponible'}`,`*Formato:* ${d.format||'APK'}`,`*Tamaño:* ${size ? formatBytes(size) : (d.filesize || 'No disponible')}`,`*Android:* ${d.requirements||'No disponible'}`,`*Actualizado:* ${d.published_at||'No disponible'}`,`*Desarrollador:* ${d.developer||'No disponible'}`]
   if(mod){ if(d.mod_features?.length) details.push(`*Funciones MOD:* ${d.mod_features.join(', ')}`); if(d.mod_changes?.length) details.push(`*Cambios MOD:* ${d.mod_changes.join(', ')}`) }
   await ctx.sock.sendMessage(ctx.chat,{image:d.icon?{url:d.icon}:undefined,text:d.icon?undefined:details.join('\n'),caption:d.icon?details.join('\n'):undefined},{quoted:ctx.msg})
-  await sendRemoteMedia(ctx.sock,ctx.chat,d,{quoted:ctx.msg,caption:`${mod?'APK MOD':'APK'} • ${d.title}`,forceDocument:true})
+  await runDownloadJob(ctx,'heavy',mod?'.apkmod':'.apk',()=>sendRemoteMedia(ctx.sock,ctx.chat,{...d,mime_type:(d.filename||'').toLowerCase().endsWith('.apk')?'application/vnd.android.package-archive':undefined},{quoted:ctx.msg,caption:`${mod?'APK MOD':'APK'} • ${d.title}`,forceDocument:true}))
 }
 export const apk={name:'apk',aliases:['apkdl'],async execute(ctx){return apiTask(ctx,()=>apkSearch(ctx,false))}}
 export const apkpick={name:'apkpick',aliases:[],async execute(ctx){return apiTask(ctx,()=>apkPick(ctx,false))}}
 export const apkmod={name:'apkmod',aliases:['modapk'],async execute(ctx){return apiTask(ctx,()=>apkSearch(ctx,true))}}
 export const apkmodpick={name:'apkmodpick',aliases:[],async execute(ctx){return apiTask(ctx,()=>apkPick(ctx,true))}}
 
-function simpleLinkCommand(name,aliases,endpoint,paramsBuilder,captionBuilder,forceDocument=false){return {name,aliases,async execute(ctx){return apiTask(ctx,async()=>{const url=ctx.args[0];if(!isLikelyUrl(url))throw new Error(usage(name,'<enlace>'));await directMedia(ctx,endpoint,paramsBuilder(url,ctx.args),captionBuilder,{forceDocument})})}}}
+function simpleLinkCommand(name,aliases,endpoint,paramsBuilder,captionBuilder,forceDocument=false,queueType='heavy'){return {name,aliases,async execute(ctx){return apiTask(ctx,async()=>{const url=ctx.args[0];if(!isLikelyUrl(url))throw new Error(usage(name,'<enlace>'));await runDownloadJob(ctx,queueType,`${config.prefix}${name}`,()=>directMedia(ctx,endpoint,paramsBuilder(url,ctx.args),captionBuilder,{forceDocument}))})}}}
 export const facebook=simpleLinkCommand('facebook',['fb'],'/facebook',(url,args)=>({mode:'link',url,quality:args[1]||'auto'}),d=>`🎬 *${d.title||'Facebook Video'}*\n📺 ${d.quality||'Auto'}\n⏱️ ${d.duration||''}`)
 export const instagram=simpleLinkCommand('instagram',['ig'],'/instagram',(url,args)=>({mode:'link',url,pick:args[1]||1,lang:'es'}),d=>`📸 *${d.title||'Instagram'}*\n👤 @${d.username||'usuario'}`)
 export const twitch=simpleLinkCommand('twitch',['twitchdl'],'/twitch/download',url=>({url}),d=>`🎮 *${d.title||'Twitch'}*\n👤 ${d.author||''}\n⏱️ ${formatDuration(d.duration_seconds)||''}`)
 export const mediafire=simpleLinkCommand('mediafire',['mf'],'/mediafire',url=>({mode:'link',url}),d=>`📁 *${d.filename||d.title}*\n📦 ${d.filesize||''}`,true)
 export const mega=simpleLinkCommand('mega',['mg'],'/mega',url=>({mode:'link',url}),d=>`☁️ *${d.filename||d.title}*\n📦 ${d.filesize||formatBytes(d.filesize_bytes)}`,true)
 
-export const threads={name:'threads',aliases:['savethreads'],async execute(ctx){return apiTask(ctx,async()=>{const url=ctx.args[0];if(!isLikelyUrl(url))throw new Error(usage('threads','<enlace>'));const d=await apiGet('/savethreads',{mode:'link',url,quality:'best',pick:ctx.args[1]||1});const items=d.downloads?.length?d.downloads:[d];for(const item of items.slice(0,10))await sendRemoteMedia(ctx.sock,ctx.chat,item,{quoted:ctx.msg,caption:d.description||d.title||'Threads'})})}}
-export const universal={name:'universal',aliases:['dl'],async execute(ctx){return apiTask(ctx,async()=>{const url=ctx.args[0];if(!isLikelyUrl(url))throw new Error(usage('dl','<enlace>'));const d=await apiGet('/universal',{mode:'link',url});const items=d.downloads?.length?d.downloads:(d.media?.length?d.media:[d]);for(const item of items.slice(0,10))await sendRemoteMedia(ctx.sock,ctx.chat,item,{quoted:ctx.msg,caption:d.title||`${d.platform||'Universal'}`})})}}
-export const pinterest={name:'pinterest',aliases:['pin','pindl'],async execute(ctx){return apiTask(ctx,async()=>{const input=queryText(ctx.args);if(!input)throw new Error(usage('pinterest','<búsqueda o enlace>'));if(isLikelyUrl(input)){const d=await apiGet('/universal',{mode:'link',url:input});const items=d.downloads?.length?d.downloads:(d.media?.length?d.media:[d]);for(const item of items.slice(0,10))await sendRemoteMedia(ctx.sock,ctx.chat,item,{quoted:ctx.msg,caption:d.title||'Pinterest'});return}const d=await apiGet('/pinterest/search',{q:input,limit:6});for(const item of (d.results||[]).slice(0,6))await sendRemoteMedia(ctx.sock,ctx.chat,{...item,type:'image',content_type:'image/jpeg'},{quoted:ctx.msg,caption:item.title||`Pinterest #${item.index}`})})}}
+export const threads={name:'threads',aliases:['savethreads'],async execute(ctx){return apiTask(ctx,async()=>{const url=ctx.args[0];if(!isLikelyUrl(url))throw new Error(usage('threads','<enlace>'));await runDownloadJob(ctx,'heavy','.threads',async()=>{const d=await apiGet('/savethreads',{mode:'link',url,quality:'best',pick:ctx.args[1]||1});const items=d.downloads?.length?d.downloads:[d];for(const item of items.slice(0,10))await sendRemoteMedia(ctx.sock,ctx.chat,item,{quoted:ctx.msg,caption:d.description||d.title||'Threads'})})})}}
+export const universal={name:'universal',aliases:['dl'],async execute(ctx){return apiTask(ctx,async()=>{const url=ctx.args[0];if(!isLikelyUrl(url))throw new Error(usage('dl','<enlace>'));await runDownloadJob(ctx,'heavy','.dl',async()=>{const d=await apiGet('/universal',{mode:'link',url});const items=d.downloads?.length?d.downloads:(d.media?.length?d.media:[d]);for(const item of items.slice(0,10))await sendRemoteMedia(ctx.sock,ctx.chat,item,{quoted:ctx.msg,caption:d.title||`${d.platform||'Universal'}`})})})}}
+export const pinterest={name:'pinterest',aliases:['pin','pindl'],async execute(ctx){return apiTask(ctx,async()=>{const input=queryText(ctx.args);if(!input)throw new Error(usage('pinterest','<búsqueda o enlace>'));if(isLikelyUrl(input)){const d=await apiGet('/universal',{mode:'link',url:input});const items=d.downloads?.length?d.downloads:(d.media?.length?d.media:[d]);for(const item of items.slice(0,10))await sendRemoteMedia(ctx.sock,ctx.chat,item,{quoted:ctx.msg,caption:d.title||'Pinterest'});return}const d=await apiGet('/pinterest/search',{q:input,limit:6});const images=(d.results||[]).slice(0,6).map(item=>({...item,type:'image',content_type:'image/jpeg'}));await sendImageAlbum(ctx.sock,ctx.chat,images,{quoted:ctx.msg,caption:`📌 *Pinterest*\nBúsqueda: ${input}\nResultados: ${images.length}`})})}}
 
 export const terabox={name:'terabox',aliases:['tb'],async execute(ctx){return apiTask(ctx,async()=>{const url=ctx.args[0];if(!isLikelyUrl(url))throw new Error(usage('terabox','<enlace>'));const d=await apiGet('/terabox',{url,limit:50});const files=d.files||[];if(!files.length)throw new Error('No encontré archivos en TeraBox.');const token=saveSelection('terabox',files);const rows=files.slice(0,10).map((f,i)=>({header:'Archivo',title:f.file_name.slice(0,90),description:formatBytes(f.size_bytes),id:`${config.prefix}teraboxpick ${token} ${i}`}));await sendInteractive(ctx.sock,ctx.chat,{title:'TeraBox Downloader',body:`Se encontraron ${files.length} archivo(s).`,media:files[0].thumb?{image:{url:files[0].thumb}}:null,buttons:[singleSelect('Seleccionar',[{title:'Archivos',rows}])]},ctx.msg)})}}
-export const teraboxpick={name:'teraboxpick',aliases:[],async execute(ctx){return apiTask(ctx,async()=>{const list=getSelection(ctx.args[0],'terabox');const f=list?.[Number(ctx.args[1])];if(!f)throw new Error('La selección venció.');await sendRemoteMedia(ctx.sock,ctx.chat,{...f,type:'file',filename:f.file_name,url:f.download_url_full},{quoted:ctx.msg,caption:`TeraBox • ${f.file_name}`,forceDocument:true})})}}
+export const teraboxpick={name:'teraboxpick',aliases:[],async execute(ctx){return apiTask(ctx,async()=>{const list=getSelection(ctx.args[0],'terabox');const f=list?.[Number(ctx.args[1])];if(!f)throw new Error('La selección venció.');await runDownloadJob(ctx,'heavy','.terabox',()=>sendRemoteMedia(ctx.sock,ctx.chat,{...f,type:'file',filename:f.file_name,url:f.download_url_full},{quoted:ctx.msg,caption:`TeraBox • ${f.file_name}`,forceDocument:true}))})}}
 
 export const anime={name:'anime',aliases:['animesub'],async execute(ctx){return apiTask(ctx,async()=>{const raw=queryText(ctx.args);if(!raw)throw new Error(usage('anime','<nombre> [episodio]'));const parts=raw.split(/\s+/);const episode=Number(parts.at(-1));const hasEpisode=Number.isInteger(episode)&&episode>0;if(hasEpisode)parts.pop();const slug=parts.join('-').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[^a-z0-9-]/g,'');const d=await apiGet(`/anime/subespanol/${slug}`,{episode_limit:50});const info=d.anime_info||{};const chapters=(d.temporadas||[]).flatMap(t=>t.capitulos||[]);if(!hasEpisode){const rows=chapters.slice(0,50).map(c=>({header:`Episodio ${c.capitulo_numero}`,title:c.titulo_capitulo||`Episodio ${c.capitulo_numero}`,description:'Ver enlaces',id:`${config.prefix}anime ${parts.join(' ')} ${c.capitulo_numero}`}));await sendInteractive(ctx.sock,ctx.chat,{title:info.titulo||'Anime',body:`Episodios disponibles: ${chapters.length}`,media:info.imagen_portada?{image:{url:info.imagen_portada}}:null,buttons:[singleSelect('Elegir episodio',[{title:'Episodios',rows}])]},ctx.msg);return}const c=chapters.find(x=>Number(x.capitulo_numero)===episode);if(!c)throw new Error('No encontré ese episodio.');const ignore=['googleapis.com','jsdelivr.net','facebook.com','google-analytics.com','login.jkanime.net','hentaijk.com','connect.facebook.net'];const streams=(c.enlaces_reproduccion||[]).map(x=>x.url).filter(u=>!ignore.some(d=>u.includes(d)));const downloads=(c.enlaces_descarga||[]).map(x=>x.url);const buttons=[];if(downloads[0])buttons.push(urlButton('📥 Descargar 1',downloads[0]));if(downloads[1])buttons.push(urlButton('📥 Descargar 2',downloads[1]));if(streams[0])buttons.push(urlButton('▶️ Ver episodio',streams[0]));await sendInteractive(ctx.sock,ctx.chat,{title:`${info.titulo||'Anime'} • Episodio ${episode}`,body:[`*${c.titulo_capitulo||`Episodio ${episode}`}*`,'',...streams.slice(0,5).map((u,i)=>`Reproductor ${i+1}: ${u}`)].join('\n'),media:info.imagen_portada?{image:{url:info.imagen_portada}}:null,buttons},ctx.msg)})}}
 
-export const downloadCommands=[play,playpick,ytmp3,ytmp4,spotify,spotifypick,ytmusic,ytmusicpick,apk,apkpick,apkmod,apkmodpick,facebook,instagram,twitch,threads,universal,pinterest,mediafire,mega,terabox,teraboxpick,anime]
+
+export const queueStatus={name:'cola',aliases:['queue'],async execute(ctx){await ctx.sock.sendMessage(ctx.chat,{text:`📥 *Estado de descargas*\n\n${formatQueueStatus()}`},{quoted:ctx.msg})}}
+export const cancelDownload={name:'cancelardescarga',aliases:['cancelardl'],async execute(ctx){const removed=cancelUserJobs(ctx.sender);await ctx.sock.sendMessage(ctx.chat,{text:removed?`✅ Se cancelaron ${removed} descarga(s) tuyas en espera.`:'No tienes descargas esperando en la cola.'},{quoted:ctx.msg})}}
+export const clearQueue={name:'limpiarcola',aliases:['clearqueue'],async execute(ctx){if(!ctx.isStaff)throw new Error('Este comando es solo para owner y subowner.');const removed=clearWaitingQueues();await ctx.sock.sendMessage(ctx.chat,{text:`✅ Cola limpiada. Solicitudes eliminadas: ${removed}.`},{quoted:ctx.msg})}}
+
+export const downloadCommands=[play,playpick,ytmp3,ytmp4,spotify,spotifypick,ytmusic,ytmusicpick,apk,apkpick,apkmod,apkmodpick,facebook,instagram,twitch,threads,universal,pinterest,mediafire,mega,terabox,teraboxpick,anime,queueStatus,cancelDownload,clearQueue]
