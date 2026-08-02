@@ -1,5 +1,5 @@
 import config from '../../config.js'
-import { apiGet, ApiError } from '../lib/api.js'
+import { apiGet, evoGet, ApiError } from '../lib/api.js'
 import { sendInteractive, quickReply, singleSelect, urlButton } from '../lib/interactive.js'
 import { formatBytes, formatDuration, isLikelyUrl, pickDownloadUrl, sendImageAlbum, sendRemoteMedia } from '../lib/media.js'
 import { cancelUserJobs, clearWaitingQueues, formatQueueStatus, runDownloadJob } from '../lib/downloadQueue.js'
@@ -75,14 +75,26 @@ export const ytmp4={name:'ytmp4',aliases:['ytvideo'],async execute(ctx){return a
 
 export const spotify={name:'spotify',aliases:['sp'],async execute(ctx){return apiTask(ctx,async()=>{
   const input=queryText(ctx.args); if(!input) throw new Error(usage('spotify','<nombre o enlace>'))
-  if(isLikelyUrl(input)) return runDownloadJob(ctx,'light','.spotify',()=>directMedia(ctx,'/spotify',{mode:'link',url:input},d=>`🎵 *${d.title||'Spotify'}*\n👤 ${d.artist||''}\n📦 ${d.format||'MP3'}`))
-  const data=await apiGet('/spotifysearch',{q:input,limit:20,lang:'es18'}); const list=data.tracks||data.results||[]; if(!list.length) throw new Error('No encontré canciones en Spotify.')
-  const token=saveSelection('spotify',list); const rows=list.slice(0,10).map((r,i)=>({header:'Audio',title:`${r.artist||'Artista'} — ${r.title||r.name}`.slice(0,90),description:'Descargar canción',id:`${config.prefix}spotifypick ${token} ${i}`}))
-  await sendInteractive(ctx.sock,ctx.chat,{title:'Spotify Downloader',body:`Resultados: *${input}*\nSelecciona una canción.`,media:list[0]?.thumbnail?{image:{url:list[0].thumbnail}}:null,buttons:[singleSelect('Seleccionar',[{title:'Canciones',rows}])]},ctx.msg)
+  if(isLikelyUrl(input)) return runDownloadJob(ctx,'light','.spotify',()=>downloadSpotifyEvo(ctx,input))
+  const data=await evoGet('/search/spotify',{query:input}); const list=data.result||[]; if(!list.length) throw new Error('No encontré canciones en Spotify.')
+  const token=saveSelection('spotify-evo',list); const rows=list.slice(0,10).map((r,i)=>({header:'Audio',title:`${r.artist||'Artista'} — ${r.title||'Canción'}`.slice(0,90),description:'Descargar canción',id:`${config.prefix}spotifypick ${token} ${i}`}))
+  await sendInteractive(ctx.sock,ctx.chat,{title:'Spotify Downloader',body:`Resultados: *${input}*\nSelecciona una canción.`,media:list[0]?.image?{image:{url:list[0].image}}:null,buttons:[singleSelect('Seleccionar',[{title:'Canciones',rows}])]},ctx.msg)
 })}}
+
+async function downloadSpotifyEvo(ctx,url){
+  const response=await evoGet('/dl/spotify',{url},{timeoutMs:180000})
+  const d=response.data||{}
+  if(!d.url) throw new Error('La nueva API de Spotify no entregó el audio.')
+  const safeName=`${d.artist||'Spotify'} - ${d.name||'Canción'}`.replace(/[\/:*?"<>|]+/g,'_')
+  await sendRemoteMedia(ctx.sock,ctx.chat,{
+    type:'audio',url:d.url,download_url:d.url,mime_type:'audio/mpeg',filename:`${safeName}.mp3`
+  },{quoted:ctx.msg,caption:`🎵 *${d.name||'Spotify'}*\n👤 ${d.artist||'No disponible'}\n💿 ${d.album||'No disponible'}\n⏱️ ${d.duration||'No disponible'}\n📅 ${d.year||'No disponible'}`})
+}
+
 export const spotifypick={name:'spotifypick',aliases:[],async execute(ctx){return apiTask(ctx,async()=>{
-  const list=getSelection(ctx.args[0],'spotify'); const item=list?.[Number(ctx.args[1])]; if(!item) throw new Error('La selección venció. Ejecuta .spotify nuevamente.')
-  const url=item.spotify_url||item.song_url||spotifyTrackUrl(item.id); await runDownloadJob(ctx,'light','.spotify',()=>directMedia(ctx,'/spotify',{mode:'link',url},d=>`🎵 *${d.title||item.title}*\n👤 ${d.artist||item.artist||''}\n📦 ${d.format||'MP3'}`))
+  const list=getSelection(ctx.args[0],'spotify-evo'); const item=list?.[Number(ctx.args[1])]; if(!item) throw new Error('La selección venció. Ejecuta .spotify nuevamente.')
+  if(!item.link) throw new Error('El resultado elegido no contiene un enlace de Spotify.')
+  await runDownloadJob(ctx,'light','.spotify',()=>downloadSpotifyEvo(ctx,item.link))
 })}}
 
 export const ytmusic={name:'ytmusic',aliases:['ytm'],async execute(ctx){return apiTask(ctx,async()=>{
@@ -170,15 +182,35 @@ export const anime={name:'anime',aliases:['animesub'],async execute(ctx){return 
   }
   const info=d.anime_info||{};const chapters=(d.temporadas||[]).flatMap(t=>t.capitulos||[])
   if(!hasEpisode){
-    const rows=chapters.slice(0,50).map(c=>({header:`Episodio ${c.capitulo_numero}`,title:c.titulo_capitulo||`Episodio ${c.capitulo_numero}`,description:'Ver enlaces',id:`${config.prefix}anime ${animeName} ${c.capitulo_numero}`}))
+    const rows=chapters.slice(0,50).map(c=>({header:`Episodio ${c.capitulo_numero}`,title:c.titulo_capitulo||`Episodio ${c.capitulo_numero}`,description:'Descargar episodio',id:`${config.prefix}anime ${animeName} ${c.capitulo_numero}`}))
     await sendInteractive(ctx.sock,ctx.chat,{title:info.titulo||'Anime',body:`Episodios disponibles: ${chapters.length}`,media:info.imagen_portada?{image:{url:info.imagen_portada}}:null,buttons:[singleSelect('Elegir episodio',[{title:'Episodios',rows}])]},ctx.msg);return
   }
   const c=chapters.find(x=>Number(x.capitulo_numero)===episode);if(!c)throw new Error('No encontré ese episodio.')
-  const ignore=['googleapis.com','apis.google.com','fonts.googleapis.com','jsdelivr.net','facebook.com','google-analytics.com','login.jkanime.net','hentaijk.com','connect.facebook.net']
-  const streams=(c.enlaces_reproduccion||[]).map(x=>x.url).filter(u=>u&&!ignore.some(domain=>u.includes(domain)))
   const downloads=(c.enlaces_descarga||[]).map(x=>x.url).filter(Boolean)
-  const buttons=[];if(downloads[0])buttons.push(urlButton('📥 Descargar 1',downloads[0]));if(downloads[1])buttons.push(urlButton('📥 Descargar 2',downloads[1]));if(streams[0])buttons.push(urlButton('▶️ Ver episodio',streams[0]))
-  await sendInteractive(ctx.sock,ctx.chat,{title:`${info.titulo||'Anime'} • Episodio ${episode}`,body:[`*${c.titulo_capitulo||`Episodio ${episode}`}*`,'',...streams.slice(0,5).map((u,i)=>`Reproductor ${i+1}: ${u}`)].join('\n'),media:info.imagen_portada?{image:{url:info.imagen_portada}}:null,buttons},ctx.msg)
+  if(!downloads.length) throw new Error('Este episodio no tiene enlaces de descarga disponibles.')
+  await runDownloadJob(ctx,'heavy','.anime',async()=>{
+    await ctx.sock.sendMessage(ctx.chat,{text:`📥 *Descarga iniciada*\n\nAnime: ${info.titulo||animeName}\nEpisodio: ${episode}\nEstado: preparando archivo…`},{quoted:ctx.msg})
+    let resolved=null
+    let source=''
+    let lastError
+    for(const originalUrl of downloads){
+      try{
+        if(/mediafire\.com/i.test(originalUrl)){
+          resolved=await apiGet('/mediafire',{mode:'link',url:originalUrl},{timeoutMs:180000}); source='MediaFire'
+        }else if(/mega\.nz/i.test(originalUrl)){
+          const normalized=originalUrl.replace('/embed/','/file/')
+          resolved=await apiGet('/mega',{mode:'link',url:normalized},{timeoutMs:180000}); source='MEGA'
+        }else continue
+        if(pickDownloadUrl(resolved)) break
+        resolved=null
+      }catch(error){ lastError=error; resolved=null }
+    }
+    if(!resolved) throw lastError||new Error('No pude preparar la descarga del episodio.')
+    const title=info.titulo||animeName
+    const filename=resolved.filename||`${title}_Episodio_${episode}.mp4`
+    await ctx.sock.sendMessage(ctx.chat,{text:`🎬 *Enviando episodio, por favor espera…*\nServidor: ${source}`},{quoted:ctx.msg})
+    await sendRemoteMedia(ctx.sock,ctx.chat,{...resolved,type:'file',filename},{quoted:ctx.msg,caption:`🎬 *${title}*\nEpisodio ${episode}\nServidor: ${source}`,forceDocument:true})
+  })
 })}}
 
 
