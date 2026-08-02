@@ -94,7 +94,7 @@ async function startNeroBot() {
     connectTimeoutMs: 60_000,
     defaultQueryTimeoutMs: undefined,
     keepAliveIntervalMs: 10_000,
-    browser: ['Nero Bot', 'Chrome', '1.3.9'],
+    browser: ['Nero Bot', 'Chrome', '1.4.0'],
     getMessage: async () => undefined
   })
 
