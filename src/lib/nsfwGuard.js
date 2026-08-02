@@ -1,4 +1,4 @@
-import { downloadMediaMessage, jidNormalizedUser } from '@whiskeysockets/baileys'
+import { downloadMediaMessage, jidNormalizedUser } from '@itsliaaa/baileys'
 
 const enabledGroups=new Set()
 const warnings=new Map()

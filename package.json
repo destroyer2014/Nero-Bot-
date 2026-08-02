@@ -1,7 +1,7 @@
 {
   "name": "nero-bot",
-  "version": "1.3.8",
-  "description": "Nero Bot v1.3.8: carrusel Yuta con su misma librería, APK renovado y paquetes Sticker.ly con metadatos",
+  "version": "1.3.9",
+  "description": "Nero Bot v1.3.9: carrusel con una sola librería Baileys y reintentos robustos para APK",
   "type": "module",
   "main": "src/index.js",
   "scripts": {
@@ -13,7 +13,6 @@
   },
   "dependencies": {
     "@hapi/boom": "^10.0.1",
-    "@whiskeysockets/baileys": "github:russellxz/ultra-baileys#master",
     "pino": "^9.7.0",
     "dotenv": "^16.6.1",
     "sharp": "^0.34.3",

@@ -1,4 +1,4 @@
-import { jidNormalizedUser } from '@whiskeysockets/baileys'
+import { jidNormalizedUser } from '@itsliaaa/baileys'
 import { getWarns, resetWarns, setNsfw } from '../lib/nsfwGuard.js'
 
 function targetFromMsg(ctx){const c=ctx.msg.message?.extendedTextMessage?.contextInfo;return jidNormalizedUser(c?.mentionedJid?.[0]||c?.participant||'')}

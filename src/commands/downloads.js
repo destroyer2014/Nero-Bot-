@@ -167,16 +167,26 @@ async function apkPick(ctx,mod=false){
   if(mod){ if(d.mod_features?.length) details.push(`*Funciones MOD:* ${d.mod_features.join(', ')}`); if(d.mod_changes?.length) details.push(`*Cambios MOD:* ${d.mod_changes.join(', ')}`) }
   await ctx.sock.sendMessage(ctx.chat,{image:d.icon?{url:d.icon}:undefined,text:d.icon?undefined:details.join('\n'),caption:d.icon?details.join('\n'):undefined},{quoted:ctx.msg})
   await runDownloadJob(ctx,'heavy',mod?'.apkmod':'.apk',async()=>{
-    let url=pickDownloadUrl(d)
-    if(!url) throw new Error('La API no entregó un enlace de descarga para el APK.')
     let file
-    try{ file=await fetchBinaryFile(url) }catch(firstError){
-      if(!d._searchQuery||!d._pick) throw firstError
-      const fresh=await apiGet(endpoint,mod?{q:d._searchQuery,pick:d._pick}:{mode:'link',q:d._searchQuery,pick:d._pick,prefer:'auto',lang:'es'},{timeoutMs:180000})
-      url=pickDownloadUrl(fresh)
-      if(!url) throw new Error('La API renovó el resultado pero no entregó el APK.')
-      file=await fetchBinaryFile(url)
-      d={...d,...fresh}
+    let lastError
+    for(let cycle=1;cycle<=4&&!file;cycle+=1){
+      if(cycle>1&&d._searchQuery&&d._pick){
+        try{
+          const fresh=await apiGet(endpoint,mod?{q:d._searchQuery,pick:d._pick}:{mode:'link',q:d._searchQuery,pick:d._pick,prefer:'auto',lang:'es',nonce:Date.now()},{timeoutMs:180000})
+          d={...d,...fresh,_searchQuery:d._searchQuery,_pick:d._pick}
+        }catch(error){ lastError=error }
+      }
+      const urls=collectDownloadUrls(d)
+      if(!urls.length) lastError=new Error('La API no entregó un enlace de descarga para el APK.')
+      for(const url of urls){
+        try{ file=await fetchBinaryFile(url,180000,2); break }
+        catch(error){ lastError=error; console.warn(`APK: intento ${cycle} falló con ${url}:`,error?.message||error) }
+      }
+      if(!file&&cycle<4) await wait(1800*cycle)
+    }
+    if(!file){
+      const reason=lastError?.message||'error desconocido'
+      throw new Error(`El servidor de descarga del APK no respondió después de varios intentos (${reason}). Intenta nuevamente en unos minutos.`)
     }
     const filename=(d.filename||`${d.title||'aplicacion'}.apk`).replace(/[\/:*?"<>|]+/g,'_')
     await ctx.sock.sendMessage(ctx.chat,{
@@ -253,24 +263,59 @@ async function applyStickerPackMeta(buffer, packname, author) {
   return image.save(null)
 }
 
-async function fetchBinaryFile(url, timeoutMs = 180000) {
-  const controller = new AbortController()
-  const timer = setTimeout(() => controller.abort(), timeoutMs)
-  try {
-    const response = await fetch(url, {
-      signal: controller.signal,
-      redirect: 'follow',
-      headers: {
-        'user-agent': 'Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 Chrome/124 Mobile Safari/537.36',
-        accept: '*/*',
-        referer: new URL(url).origin + '/'
-      }
-    })
-    if (!response.ok) throw new Error(`HTTP ${response.status}`)
-    const buffer = Buffer.from(await response.arrayBuffer())
-    if (!buffer.length) throw new Error('Archivo vacío')
-    return { buffer, contentType: response.headers.get('content-type') || '' }
-  } finally { clearTimeout(timer) }
+function collectDownloadUrls(data = {}) {
+  const keys = [
+    'proxy_download_url_full', 'proxy_download_url',
+    'download_url_full', 'stream_url_full', 'direct_url',
+    'download_url', 'stream_url', 'url'
+  ]
+  const found = []
+  const seenObjects = new Set()
+  const seenUrls = new Set()
+  const queue = [data]
+  while (queue.length) {
+    const value = queue.shift()
+    if (!value || typeof value !== 'object' || seenObjects.has(value)) continue
+    seenObjects.add(value)
+    for (const key of keys) {
+      const candidate = value[key]
+      if (typeof candidate !== 'string' || !candidate.trim()) continue
+      try {
+        const absolute = new URL(candidate, config.apiBaseUrl).toString()
+        if (!seenUrls.has(absolute)) { seenUrls.add(absolute); found.push(absolute) }
+      } catch {}
+    }
+    if (Array.isArray(value)) queue.push(...value)
+    else queue.push(...Object.values(value).filter(child => child && typeof child === 'object'))
+  }
+  return found
+}
+
+async function fetchBinaryFile(url, timeoutMs = 180000, attempts = 3) {
+  let lastError
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), timeoutMs)
+    try {
+      const response = await fetch(url, {
+        signal: controller.signal,
+        redirect: 'follow',
+        headers: {
+          'user-agent': 'Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 Chrome/124 Mobile Safari/537.36',
+          accept: 'application/vnd.android.package-archive,application/octet-stream,*/*',
+          'accept-encoding': 'identity'
+        }
+      })
+      if (!response.ok) throw new Error(`HTTP ${response.status}`)
+      const buffer = Buffer.from(await response.arrayBuffer())
+      if (!buffer.length) throw new Error('Archivo vacío')
+      return { buffer, contentType: response.headers.get('content-type') || '' }
+    } catch (error) {
+      lastError = error
+      if (attempt < attempts) await wait(1200 * attempt)
+    } finally { clearTimeout(timer) }
+  }
+  throw lastError
 }
 
 export const stickerPack={name:'stickerpack',aliases:['stickerdetail'],async execute(ctx){return apiTask(ctx,async()=>{

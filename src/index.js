@@ -4,11 +4,14 @@ import process from 'node:process'
 import path from 'node:path'
 import pino from 'pino'
 import { Boom } from '@hapi/boom'
-import makeWASocket, {
+import {
+  makeWASocket,
   DisconnectReason,
   jidNormalizedUser,
-  useMultiFileAuthState
-} from '@whiskeysockets/baileys'
+  useMultiFileAuthState,
+  fetchLatestBaileysVersion,
+  makeCacheableSignalKeyStore
+} from '@itsliaaa/baileys'
 import config from '../config.js'
 import { extractText } from './lib/text.js'
 import { findCommand } from './commands/index.js'
@@ -73,10 +76,16 @@ async function startNeroBot() {
     pairingCodeRequested = false
   }
 
-  // Ultra Baileys obtiene automáticamente la versión activa de WhatsApp Web.
-  // No fijamos `version`, para permitir que el fork evite rechazos 405/428.
+  // Usamos la misma librería para el socket y para construir mensajes
+  // interactivos/carruseles. Mezclar dos implementaciones de Baileys hacía
+  // que WhatsApp aceptara la reacción, pero descartara el carrusel.
+  const { version } = await fetchLatestBaileysVersion()
   const sock = makeWASocket({
-    auth: state,
+    version,
+    auth: {
+      creds: state.creds,
+      keys: makeCacheableSignalKeyStore(state.keys, logger)
+    },
     logger,
     printQRInTerminal: false,
     markOnlineOnConnect: false,
@@ -84,7 +93,9 @@ async function startNeroBot() {
     generateHighQualityLinkPreview: true,
     connectTimeoutMs: 60_000,
     defaultQueryTimeoutMs: undefined,
-    keepAliveIntervalMs: 10_000
+    keepAliveIntervalMs: 10_000,
+    browser: ['Nero Bot', 'Chrome', '1.3.9'],
+    getMessage: async () => undefined
   })
 
   sock.ev.on('creds.update', saveCreds)
