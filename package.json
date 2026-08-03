@@ -1,7 +1,7 @@
 {
   "name": "nero-bot",
-  "version": "1.6.7",
-  "description": "Nero Bot v1.6.7: parche cards compatible con Ultra Baileys ESM y comandos Owner",
+  "version": "1.6.8",
+  "description": "Nero Bot v1.6.8: compatibilidad Ultra Cards, corrección de ping y comandos Owner",
   "type": "module",
   "main": "src/index.js",
   "scripts": {
