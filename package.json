@@ -1,7 +1,7 @@
 {
   "name": "nero-bot",
-  "version": "1.7.0",
-  "description": "Nero Bot v1.7.0: migración de Ultra a NexusTechPro Baileys con soporte para carruseles y álbumes",
+  "version": "1.7.1",
+  "description": "Nero Bot v1.7.1: migración al Baileys funcional de Yuta con carrusel protobuf estable",
   "type": "module",
   "main": "src/index.js",
   "scripts": {
@@ -17,6 +17,6 @@
     "dotenv": "^16.6.1",
     "sharp": "^0.34.3",
     "node-webpmux": "^3.2.1",
-    "@whiskeysockets/baileys": "npm:@nexustechpro/baileys@2.2.0"
+    "@itsliaaa/baileys": "0.3.0-rc.9"
   }
 }

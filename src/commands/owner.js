@@ -1,6 +1,6 @@
 import { exec as execCallback } from 'node:child_process'
 import { promisify } from 'node:util'
-import { downloadMediaMessage } from '@whiskeysockets/baileys'
+import { downloadMediaMessage } from '@itsliaaa/baileys'
 import { unwrapMessage } from '../lib/text.js'
 
 const exec = promisify(execCallback)

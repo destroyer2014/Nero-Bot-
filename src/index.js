@@ -8,7 +8,7 @@ import makeWASocket, {
   DisconnectReason,
   jidNormalizedUser,
   useMultiFileAuthState
-} from '@whiskeysockets/baileys'
+} from '@itsliaaa/baileys'
 import config from '../config.js'
 import { extractText } from './lib/text.js'
 import { findCommand } from './commands/index.js'

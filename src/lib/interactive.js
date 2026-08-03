@@ -2,7 +2,7 @@ import {
   WAProto as proto,
   prepareWAMessageMedia,
   generateWAMessageFromContent
-} from '@whiskeysockets/baileys'
+} from '@itsliaaa/baileys'
 import fs from 'node:fs/promises'
 import path from 'node:path'
 
