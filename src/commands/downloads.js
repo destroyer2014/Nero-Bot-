@@ -417,7 +417,7 @@ export const testcards={name:'testcards',aliases:[],async execute(ctx){return ap
     {image:imageB,title:'Tarjeta 2',body:'Si ves esto, cards funciona.',footer:'Nero Bot',buttons:[]}
   ];
   console.log('[TESTCARDS] prueba básica sin botones');
-  await ctx.sock.sendMessage(ctx.chat,{title:'Prueba Cards',text:'Carrusel directo del fork fsociety, sin botones.',subtitle:'Nero Bot',footer:'Nero Bot',cards});
+  await ctx.sock.sendMessage(ctx.chat,{title:'Prueba Cards',text:'Carrusel directo del Ultra Baileys, sin botones.',subtitle:'Nero Bot',footer:'Nero Bot',cards});
 })}}
 
 export const testcardsbtn={name:'testcardsbtn',aliases:[],async execute(ctx){return apiTask(ctx,async()=>{
