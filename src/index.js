@@ -95,6 +95,47 @@ function resolveSenderJid(msg) {
   return jidNormalizedUser(candidates.find(isPhoneJid) || candidates.find(Boolean) || '')
 }
 
+async function resolveSenderIdentity(sock, msg, chat) {
+  const initial = resolveSenderJid(msg)
+  if (!initial.endsWith('@lid') || !isGroupJid(chat)) return initial
+
+  try {
+    const metadata = await sock.groupMetadata(chat)
+    const participants = metadata?.participants || []
+    const raw = initial.split('@')[0].split(':')[0]
+    const match = participants.find(participant => {
+      const values = [participant?.id, participant?.lid, participant?.phoneNumber, participant?.jid]
+        .filter(Boolean)
+        .map(value => String(value))
+      return values.some(value => value === initial || value.split('@')[0].split(':')[0] === raw)
+    })
+
+    const candidates = [
+      match?.phoneNumber,
+      match?.jid,
+      match?.id,
+      msg?.key?.participantAlt,
+      msg?.key?.remoteJidAlt
+    ].filter(Boolean)
+
+    const phoneJid = candidates.find(isPhoneJid)
+    if (phoneJid) {
+      const resolved = jidNormalizedUser(phoneJid)
+      console.log('[JID] LID resuelto por metadata:', { lid: initial, phoneJid: resolved })
+      return resolved
+    }
+
+    console.log('[JID] No se pudo resolver LID por metadata:', {
+      lid: initial,
+      participant: match || null
+    })
+  } catch (error) {
+    console.warn('[JID] Error resolviendo LID:', error?.message || error)
+  }
+
+  return initial
+}
+
 function formatPairingCode(code = '') {
   return code.match(/.{1,4}/g)?.join('-') || code
 }
@@ -224,7 +265,7 @@ async function startNeroBot() {
         if (!msg.message || msg.key.remoteJid === 'status@broadcast') continue
 
         const chat = resolveChatJid(msg)
-        const sender = resolveSenderJid(msg)
+        const sender = await resolveSenderIdentity(sock, msg, chat)
 
         if (msg.key.remoteJid?.endsWith('@lid')) {
           console.log('[JID] Mensaje privado con LID:', {

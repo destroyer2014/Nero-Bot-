@@ -1,7 +1,7 @@
 {
   "name": "nero-bot",
-  "version": "1.5.0",
-  "description": "Nero Bot v1.5.0: IA, anime, administración persistente, Anti-NSFW EvoGB, owner .vv y carrusel directo experimental con respaldo",
+  "version": "1.5.3",
+  "description": "Nero Bot v1.5.3: NanoBanana local automático y prompts de imagen en español",
   "type": "module",
   "main": "src/index.js",
   "scripts": {
@@ -16,7 +16,7 @@
     "pino": "^9.7.0",
     "dotenv": "^16.6.1",
     "sharp": "^0.34.3",
-    "@itsliaaa/baileys": "^0.3.0-rc.9",
+    "@itsliaaa/baileys": "github:DevYerZx/fsociety-Baileys",
     "node-webpmux": "^3.2.1"
   }
 }

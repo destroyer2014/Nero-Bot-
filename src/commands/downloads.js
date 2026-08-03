@@ -380,8 +380,8 @@ export const tiktokSearch={name:'tiktoksearch',aliases:['ttsearch'],async execut
       image:{url:item.cover},
       title:`TikTok • ${index+1}`,
       body:[`*${(item.title||'Sin título').slice(0,150)}*`,`Autor: @${username}`,`Duración: ${item.duration||'--'}`,`❤️ ${stats.likes||0}  💬 ${stats.comments||0}  ▶️ ${stats.views||0}`].join('\n'),
-      footer:'Nero Bot',
-      buttons:[quickReply('Descargar',`${config.prefix}tiktok ${original}`)]
+      footer:`Usa la lista inferior para descargar`,
+      buttons:[]
     }
   })
 
@@ -406,10 +406,27 @@ export const tiktokSearch={name:'tiktoksearch',aliases:['ttsearch'],async execut
 })}}
 
 export const testcards={name:'testcards',aliases:[],async execute(ctx){return apiTask(ctx,async()=>{
-  await ctx.sock.sendMessage(ctx.chat,{title:'Prueba Cards',text:'Carrusel directo del fork.',footer:'Nero Bot',cards:[
-    {image:{url:'https://picsum.photos/seed/nero1/640/640'},title:'Tarjeta 1',body:'Prueba de carrusel directo.',footer:'Nero Bot',buttons:[quickReply('Menú',`${config.prefix}menu`)]},
-    {image:{url:'https://picsum.photos/seed/nero2/640/640'},title:'Tarjeta 2',body:'Si ves esto, cards funciona.',footer:'Nero Bot',buttons:[quickReply('Ping',`${config.prefix}ping`)]}
-  ]})
+  const makeCard=async(label,color)=>{
+    const svg=Buffer.from(`<svg xmlns="http://www.w3.org/2000/svg" width="640" height="640"><rect width="640" height="640" rx="48" fill="${color}"/><text x="320" y="300" fill="white" font-size="86" text-anchor="middle" font-family="sans-serif" font-weight="700">${label}</text><text x="320" y="390" fill="white" font-size="38" text-anchor="middle" font-family="sans-serif">Nero Bot</text></svg>`);
+    return sharp(svg).jpeg({quality:90}).toBuffer();
+  };
+  const imageA=await makeCard('A','#6d28d9');
+  const imageB=await makeCard('B','#be123c');
+  const cards=[
+    {image:imageA,title:'Tarjeta 1',body:'Prueba de carrusel directo sin botones.',footer:'Nero Bot',buttons:[]},
+    {image:imageB,title:'Tarjeta 2',body:'Si ves esto, cards funciona.',footer:'Nero Bot',buttons:[]}
+  ];
+  console.log('[TESTCARDS] prueba básica sin botones');
+  await ctx.sock.sendMessage(ctx.chat,{title:'Prueba Cards',text:'Carrusel directo del fork fsociety, sin botones.',subtitle:'Nero Bot',footer:'Nero Bot',cards});
+})}}
+
+export const testcardsbtn={name:'testcardsbtn',aliases:[],async execute(ctx){return apiTask(ctx,async()=>{
+  const image=await sharp({create:{width:640,height:640,channels:3,background:'#111827'}}).jpeg().toBuffer();
+  const cards=[
+    {image,title:'Tarjeta con botón',body:'Prueba separada de quick_reply.',footer:'Nero Bot',buttons:[quickReply('Abrir menú',`${config.prefix}menu`)]}
+  ];
+  console.log('[TESTCARDSBTN] prueba con botón');
+  await ctx.sock.sendMessage(ctx.chat,{title:'Prueba Cards + botón',text:'Esta prueba puede fallar si el fork tiene un error con botones dentro del carrusel.',footer:'Nero Bot',cards});
 })}}
 
 
@@ -497,4 +514,4 @@ export const queueStatus={name:'cola',aliases:['queue'],async execute(ctx){await
 export const cancelDownload={name:'cancelardescarga',aliases:['cancelardl'],async execute(ctx){const removed=cancelUserJobs(ctx.sender);await ctx.sock.sendMessage(ctx.chat,{text:removed?`✅ Se cancelaron ${removed} descarga(s) tuyas en espera.`:'No tienes descargas esperando en la cola.'},{quoted:ctx.msg})}}
 export const clearQueue={name:'limpiarcola',aliases:['clearqueue'],async execute(ctx){if(!ctx.isStaff)throw new Error('Este comando es solo para owner y subowner.');const removed=clearWaitingQueues();await ctx.sock.sendMessage(ctx.chat,{text:`✅ Cola limpiada. Solicitudes eliminadas: ${removed}.`},{quoted:ctx.msg})}}
 
-export const downloadCommands=[play,playpick,ytmp3,ytmp4,spotify,spotifypick,ytmusic,ytmusicpick,apk,apkpick,apkmod,apkmodpick,facebook,instagram,twitch,threads,universal,pinterest,pinterestSearch,stickerSearch,stickerPack,tiktok,tiktokSearch,testcards,mediafire,mega,terabox,teraboxpick,anime,queueStatus,cancelDownload,clearQueue]
+export const downloadCommands=[play,playpick,ytmp3,ytmp4,spotify,spotifypick,ytmusic,ytmusicpick,apk,apkpick,apkmod,apkmodpick,facebook,instagram,twitch,threads,universal,pinterest,pinterestSearch,stickerSearch,stickerPack,tiktok,tiktokSearch,testcards,testcardsbtn,mediafire,mega,terabox,teraboxpick,anime,queueStatus,cancelDownload,clearQueue]

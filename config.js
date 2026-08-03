@@ -3,13 +3,15 @@ export default {
   creator: 'ArcadiaCorps',
   plugins: '60+',
   website: 'https://arcadiacorps.online',
-  version: '1.5.0',
+  version: '1.5.2',
   prefix: '.',
   timezone: 'America/Lima',
   sessionName: 'principal',
   instanceType: 'principal', // "principal" o "subbot"
 
   ownerNumbers: ['51917611323'],
+  // JID LID observado para el owner. Puede ampliarse con OWNER_LIDS en .env.
+  ownerLids: ['50148205949148'],
   subOwnerNumbers: ['51921909260'],
 
   menuVideo: './assets/nero-menu.mp4',
