@@ -9,7 +9,6 @@ import {
   DisconnectReason,
   jidNormalizedUser,
   useMultiFileAuthState,
-  fetchLatestBaileysVersion,
   makeCacheableSignalKeyStore
 } from '@whiskeysockets/baileys'
 import config from '../config.js'
@@ -21,6 +20,64 @@ import { getGroup } from './lib/groupStore.js'
 
 const logger = pino({ level: process.env.BAILEYS_LOG_LEVEL || 'silent' })
 const sessionPath = path.resolve('sessions', config.sessionName)
+
+
+const DEFAULT_WA_VERSION = [2, 3000, 1034074495]
+const BAILEYS_VERSION_URL = 'https://raw.githubusercontent.com/WhiskeySockets/Baileys/refs/heads/master/src/Defaults/baileys-version.json'
+
+function parseWaVersion(value) {
+  if (Array.isArray(value) && value.length === 3) {
+    const parsed = value.map(Number)
+    return parsed.every(Number.isInteger) ? parsed : null
+  }
+
+  const parts = String(value || '')
+    .trim()
+    .replace(/[\[\]]/g, '')
+    .split(/[.,\s]+/)
+    .filter(Boolean)
+    .map(Number)
+
+  return parts.length === 3 && parts.every(Number.isInteger) ? parts : null
+}
+
+async function fetchJsonWithTimeout(url, timeoutMs = 10_000) {
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), timeoutMs)
+  try {
+    const response = await fetch(url, {
+      signal: controller.signal,
+      headers: {
+        'user-agent': 'Nero-Bot/1.5.6',
+        accept: 'application/json,text/plain,*/*'
+      }
+    })
+    if (!response.ok) throw new Error(`HTTP ${response.status}`)
+    return await response.json()
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
+async function resolveWaVersion() {
+  const configured = parseWaVersion(process.env.NERO_WA_VERSION)
+  if (configured) {
+    console.log(`◆ WA Web v${configured.join('.')} (configurada en NERO_WA_VERSION)`)
+    return configured
+  }
+
+  try {
+    const payload = await fetchJsonWithTimeout(BAILEYS_VERSION_URL)
+    const remote = parseWaVersion(payload?.version)
+    if (!remote) throw new Error('Respuesta sin una versión válida')
+    console.log(`◆ WA Web v${remote.join('.')} (actualizada desde Baileys oficial)`)
+    return remote
+  } catch (error) {
+    console.warn(`⚠️ No se pudo consultar la versión WA Web actual: ${error?.message || error}`)
+    console.warn(`⚠️ Se usará el respaldo v${DEFAULT_WA_VERSION.join('.')}. Puedes cambiarlo con NERO_WA_VERSION=2,3000,XXXXXXXXXX`)
+    return DEFAULT_WA_VERSION
+  }
+}
 
 let phoneNumber = null
 let pairingCodeRequested = false
@@ -160,7 +217,7 @@ async function startNeroBot() {
   // Usamos la misma librería para el socket y para construir mensajes
   // interactivos/carruseles. Mezclar dos implementaciones de Baileys hacía
   // que WhatsApp aceptara la reacción, pero descartara el carrusel.
-  const { version } = await fetchLatestBaileysVersion()
+  const version = await resolveWaVersion()
   const sock = makeWASocket({
     version,
     auth: {
@@ -175,7 +232,7 @@ async function startNeroBot() {
     connectTimeoutMs: 60_000,
     defaultQueryTimeoutMs: undefined,
     keepAliveIntervalMs: 10_000,
-    browser: ['Nero Bot', 'Chrome', '1.5.0'],
+    browser: ['Nero Bot', 'Chrome', '1.5.6'],
     getMessage: async () => undefined
   })
 

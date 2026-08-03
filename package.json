@@ -1,7 +1,7 @@
 {
   "name": "nero-bot",
-  "version": "1.5.5",
-  "description": "Nero Bot v1.5.5: restaurado a Ultra Baileys RC13 sin modificar comandos ni TikTok",
+  "version": "1.5.6",
+  "description": "Nero Bot v1.5.6: Ultra Baileys con resolución dinámica de la versión WA Web para vinculación",
   "type": "module",
   "main": "src/index.js",
   "scripts": {
