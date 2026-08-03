@@ -1,7 +1,7 @@
 {
   "name": "nero-bot",
-  "version": "1.6.3",
-  "description": "Nero Bot v1.6.3: DevYer eliminado; restaurado RussellXZ Ultra Baileys con conexión por código original",
+  "version": "1.6.4",
+  "description": "Nero Bot v1.6.4: carrusel TikTok nativo, administración, Anti-NSFW y welcome corregidos",
   "type": "module",
   "main": "src/index.js",
   "scripts": {

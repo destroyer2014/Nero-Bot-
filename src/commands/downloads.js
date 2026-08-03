@@ -371,64 +371,53 @@ export const tiktokSearch={name:'tiktoksearch',aliases:['ttsearch'],async execut
   const response=await evoGet('/search/tiktok',{query:input})
   const list=(response.data||[]).slice(0,10)
   if(!list.length)throw new Error('No encontré resultados en TikTok.')
-
-  const cards=list.map((item,index)=>{
+  const cards=[]
+  for(let index=0;index<list.length;index+=1){
+    const item=list[index]
     const username=item.author?.unique_id||'usuario'
     const original=`https://www.tiktok.com/@${username}/video/${item.id}`
     const stats=item.stats||{}
-    return {
-      image:{url:item.cover},
-      title:`TikTok • ${index+1}`,
-      body:[`*${(item.title||'Sin título').slice(0,150)}*`,`Autor: @${username}`,`Duración: ${item.duration||'--'}`,`❤️ ${stats.likes||0}  💬 ${stats.comments||0}  ▶️ ${stats.views||0}`].join('\n'),
-      footer:`Usa la lista inferior para descargar`,
-      buttons:[]
-    }
-  })
-
-  // Carrusel nativo del fork: sock.sendMessage({ cards }). Algunas cuentas lo
-  // renderizan y otras lo descartan silenciosamente, por eso siempre dejamos
-  // debajo una lista interactiva estable como respaldo.
-  try{
-    await ctx.sock.sendMessage(ctx.chat,{
-      title:'TikTok Buscador',
-      text:`*TikTok Buscador*\nResultados para: *${input}*`,
+    let image
+    try{image=await fetchImageBuffer(item.cover)}catch{image=await getFallbackTikTokCover()}
+    cards.push({
+      image,
+      title:`Resultados para: ${input}`,
+      body:[
+        '*TikTok - Resultado*','',
+        `➠ *Vídeo:* ${index+1}`,
+        `➠ *Título:* ${(item.title||'Sin título').slice(0,220)}`,
+        `➠ *Duración:* ${item.duration||'--'} segundos`,
+        `➠ *Región:* ${item.region||'--'}`,
+        `➠ *Autor:* ${username}`,
+        `➠ *Likes:* ${stats.likes||0}`,
+        `➠ *Comentarios:* ${stats.comments||0}`,
+        `➠ *Shares:* ${stats.shares||0}`,
+        `➠ *Reproducciones:* ${stats.views||0}`,
+        `➠ *URL:* ${original}`,'',
+        'Usa el botón para descargar/ver'
+      ].join('\n'),
       footer:'Nero Bot',
-      cards
+      buttons:[copyButton('Copy',`${config.prefix}tiktok ${original}`)]
     })
-  }catch(error){console.warn('[CARDS DIRECTO] No compatible:',error?.message||error)}
-
-  const rows=list.map((item,index)=>{
-    const username=item.author?.unique_id||'usuario'
-    const original=`https://www.tiktok.com/@${username}/video/${item.id}`
-    return {title:`${index+1}. ${(item.title||'Sin título').slice(0,55)}`,description:`@${username} • ${item.duration||'--'}`,id:`${config.prefix}tiktok ${original}`}
-  })
-  await sendInteractive(ctx.sock,ctx.chat,{title:'TikTok Buscador',body:`Resultados para: *${input}*\n\nSi tu WhatsApp no muestra el carrusel, usa la lista.`,footer:'Nero Bot',media:list[0]?.cover?{image:{url:list[0].cover}}:null,buttons:[singleSelect('Ver resultados',[{title:'TikTok',rows}])]},ctx.msg)
+  }
+  try{
+    await sendCarousel(ctx.sock,ctx.chat,{body:`◯╰⇢ *TikTok-Buscador* «·«╮\nResultados para: *${input}*`,footer:'Nero Bot',cards,debugLabel:'TIKTOK-CARRUSEL',messageVersion:1},ctx.msg)
+  }catch(error){
+    console.error('[TIKTOK-CARRUSEL] fallback:',error?.message||error)
+    const rows=list.map((item,index)=>{const username=item.author?.unique_id||'usuario';const original=`https://www.tiktok.com/@${username}/video/${item.id}`;return {title:`${index+1}. ${(item.title||'Sin título').slice(0,55)}`,description:`@${username} • ${item.duration||'--'}`,id:`${config.prefix}tiktok ${original}`}})
+    await sendInteractive(ctx.sock,ctx.chat,{title:'TikTok Buscador',body:`Resultados para: *${input}*`,footer:'Nero Bot',media:list[0]?.cover?{image:{url:list[0].cover}}:null,buttons:[singleSelect('Ver resultados',[{title:'TikTok',rows}])]},ctx.msg)
+  }
 })}}
 
 export const testcards={name:'testcards',aliases:[],async execute(ctx){return apiTask(ctx,async()=>{
-  const makeCard=async(label,color)=>{
-    const svg=Buffer.from(`<svg xmlns="http://www.w3.org/2000/svg" width="640" height="640"><rect width="640" height="640" rx="48" fill="${color}"/><text x="320" y="300" fill="white" font-size="86" text-anchor="middle" font-family="sans-serif" font-weight="700">${label}</text><text x="320" y="390" fill="white" font-size="38" text-anchor="middle" font-family="sans-serif">Nero Bot</text></svg>`);
-    return sharp(svg).jpeg({quality:90}).toBuffer();
-  };
-  const imageA=await makeCard('A','#6d28d9');
-  const imageB=await makeCard('B','#be123c');
-  const cards=[
-    {image:imageA,title:'Tarjeta 1',body:'Prueba de carrusel directo sin botones.',footer:'Nero Bot',buttons:[]},
-    {image:imageB,title:'Tarjeta 2',body:'Si ves esto, cards funciona.',footer:'Nero Bot',buttons:[]}
-  ];
-  console.log('[TESTCARDS] prueba básica sin botones');
-  await ctx.sock.sendMessage(ctx.chat,{title:'Prueba Cards',text:'Carrusel directo del Ultra Baileys, sin botones.',subtitle:'Nero Bot',footer:'Nero Bot',cards});
+  const imageA=await sharp({create:{width:640,height:640,channels:3,background:'#6d28d9'}}).jpeg().toBuffer()
+  const imageB=await sharp({create:{width:640,height:640,channels:3,background:'#be123c'}}).jpeg().toBuffer()
+  await sendCarousel(ctx.sock,ctx.chat,{body:'Prueba de carrusel nativo de Ultra Baileys',footer:'Nero Bot',debugLabel:'TESTCARDS',cards:[
+    {image:imageA,title:'Tarjeta 1',body:'Carrusel nativo sin depender de cards directas.',footer:'Nero Bot',buttons:[copyButton('Copy','.menu')]},
+    {image:imageB,title:'Tarjeta 2',body:'Desliza horizontalmente para verla.',footer:'Nero Bot',buttons:[copyButton('Copy','.ping')]}
+  ]},ctx.msg)
 })}}
-
-export const testcardsbtn={name:'testcardsbtn',aliases:[],async execute(ctx){return apiTask(ctx,async()=>{
-  const image=await sharp({create:{width:640,height:640,channels:3,background:'#111827'}}).jpeg().toBuffer();
-  const cards=[
-    {image,title:'Tarjeta con botón',body:'Prueba separada de quick_reply.',footer:'Nero Bot',buttons:[quickReply('Abrir menú',`${config.prefix}menu`)]}
-  ];
-  console.log('[TESTCARDSBTN] prueba con botón');
-  await ctx.sock.sendMessage(ctx.chat,{title:'Prueba Cards + botón',text:'Esta prueba puede fallar si el fork tiene un error con botones dentro del carrusel.',footer:'Nero Bot',cards});
-})}}
-
+export const testcardsbtn={name:'testcardsbtn',aliases:[],async execute(ctx){return testcards.execute(ctx)}}
 
 
 export const terabox={name:'terabox',aliases:['tb'],async execute(ctx){return apiTask(ctx,async()=>{const url=ctx.args[0];if(!isLikelyUrl(url))throw new Error(usage('terabox','<enlace>'));const d=await apiGet('/terabox',{url,limit:50});const files=d.files||[];if(!files.length)throw new Error('No encontré archivos en TeraBox.');const token=saveSelection('terabox',files);const rows=files.slice(0,10).map((f,i)=>({header:'Archivo',title:f.file_name.slice(0,90),description:formatBytes(f.size_bytes),id:`${config.prefix}teraboxpick ${token} ${i}`}));await sendInteractive(ctx.sock,ctx.chat,{title:'TeraBox Downloader',body:`Se encontraron ${files.length} archivo(s).`,media:files[0].thumb?{image:{url:files[0].thumb}}:null,buttons:[singleSelect('Seleccionar',[{title:'Archivos',rows}])]},ctx.msg)})}}

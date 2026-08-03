@@ -7,6 +7,7 @@ try { state = JSON.parse(fs.readFileSync(file, 'utf8')) } catch { state = {} }
 
 const defaults = {
   antiNsfw: false,
+  antiNsfwDebug: false,
   antiLink: false,
   antiSpam: false,
   welcome: false,

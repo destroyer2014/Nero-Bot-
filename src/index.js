@@ -224,14 +224,20 @@ async function startNeroBot() {
 
   sock.ev.on('group-participants.update', async update => {
     try {
-      const settings = getGroup(update.id)
-      if (!settings.welcome && !settings.goodbye) return
-      const metadata = await sock.groupMetadata(update.id).catch(() => null)
+      const groupId = update?.id || update?.jid || update?.chatId
+      const participants = Array.isArray(update?.participants) ? update.participants : []
+      const action = String(update?.action || '').toLowerCase()
+      if (!groupId || !participants.length) return
+      const settings = getGroup(groupId)
+      const isAdd = ['add','invite','join'].includes(action)
+      const isRemove = ['remove','leave'].includes(action)
+      if ((!isAdd && !isRemove) || (isAdd && !settings.welcome) || (isRemove && !settings.goodbye)) return
+      const metadata = await sock.groupMetadata(groupId).catch(() => null)
       if (!metadata) return
-      for (const participant of update.participants || []) {
-        const isAdd = update.action === 'add'
-        const isRemove = update.action === 'remove'
-        if ((isAdd && !settings.welcome) || (isRemove && !settings.goodbye) || (!isAdd && !isRemove)) continue
+      console.log(isAdd ? '[WELCOME] Usuarios añadidos:' : '[GOODBYE] Usuarios retirados:', participants)
+      for (const rawParticipant of participants) {
+        const participant = typeof rawParticipant === 'string' ? rawParticipant : (rawParticipant?.id || rawParticipant?.jid || rawParticipant?.lid || rawParticipant?.phoneNumber)
+        if (!participant) continue
         const template = isAdd ? settings.welcomeText : settings.goodbyeText
         const text = String(template || '')
           .replaceAll('@user', `@${participant.split('@')[0]}`)
@@ -240,10 +246,14 @@ async function startNeroBot() {
           .replaceAll('@date', new Date().toLocaleDateString('es-PE', { timeZone: config.timezone }))
           .replaceAll('@time', new Date().toLocaleTimeString('es-PE', { timeZone: config.timezone, hour: '2-digit', minute: '2-digit' }))
         const image = isAdd ? settings.welcomeImage : settings.goodbyeImage
-        if (image) await sock.sendMessage(update.id, { image: { url: image }, caption: text, mentions: [participant] })
-        else await sock.sendMessage(update.id, { text, mentions: [participant] })
+        if (image) {
+          const fs = await import('node:fs/promises')
+          let media = { url: image }
+          try { media = await fs.readFile(image) } catch {}
+          await sock.sendMessage(groupId, { image: media, caption: text, mentions: [participant] })
+        } else await sock.sendMessage(groupId, { text, mentions: [participant] })
       }
-    } catch (error) { console.error('[BIENVENIDA]', error?.message || error) }
+    } catch (error) { console.error('[WELCOME/GOODBYE]', error?.message || error) }
   })
 
   sock.ev.on('messages.upsert', async ({ messages, type }) => {
