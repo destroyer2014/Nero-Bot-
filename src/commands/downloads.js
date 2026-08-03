@@ -368,71 +368,46 @@ export const stickerPack={name:'stickerpack',aliases:['stickerdetail'],async exe
 
 export const tiktok={name:'tiktok',aliases:['tt'],async execute(ctx){return apiTask(ctx,async()=>{const url=ctx.args[0];if(!isLikelyUrl(url))throw new Error(usage('tiktok','<enlace>'));await runDownloadJob(ctx,'heavy','.tiktok',async()=>{const response=await evoGet('/dl/tiktok',{url},{timeoutMs:180000});const d=response.data||{};if(!d.dl)throw new Error('TikTok no entregó contenido descargable.');const author=d.author?.nickname||d.author?.unique_id||'TikTok';const caption=[`${d.type==='image'?'🖼️':'🎵'} *${d.title||'TikTok'}*`,`👤 ${author}${d.author?.unique_id?` (@${d.author.unique_id})`:''}`,d.type==='image'&&Array.isArray(d.dl)?`📷 Fotos: ${d.dl.length}`:`⏱️ ${d.duration||'No disponible'}`,`🌎 ${d.region||'--'}`,d.stats?`▶️ ${d.stats.plays||0}  ❤️ ${d.stats.likes||0}  💬 ${d.stats.comments||0}`:''].filter(Boolean).join('\n');if(d.type==='image'&&Array.isArray(d.dl)){const items=d.dl.map((image,index)=>({type:'image',download_url:image,title:`TikTok foto ${index+1}`}));await sendImageAlbum(ctx.sock,ctx.chat,items,{quoted:ctx.msg,caption});return}const videoUrl=Array.isArray(d.dl)?d.dl[0]:d.dl;if(!videoUrl)throw new Error('TikTok no entregó el video.');await sendRemoteMedia(ctx.sock,ctx.chat,{type:'video',url:videoUrl,download_url:videoUrl,mime_type:'video/mp4',filename:`TikTok-${d.id||Date.now()}.mp4`},{quoted:ctx.msg,caption})})})}}
 
-export const tiktokSearch={name:'tiktoksearch',aliases:['ttsearch'],async execute(ctx){return apiTask(ctx,async()=>{
+export const tiktokSearch={name:'tiktoksearch',aliases:['ttsearch','tts','tiktoks'],async execute(ctx){return apiTask(ctx,async()=>{
   const input=queryText(ctx.args)
-  if(!input)throw new Error(usage('tiktoksearch','<búsqueda>'))
+  if(!input)throw new Error(usage('tts','<búsqueda>'))
   const response=await evoGet('/search/tiktok',{query:input})
   const list=(response.data||[]).slice(0,10)
   if(!list.length)throw new Error('No encontré resultados en TikTok.')
-  const cards=[]
-  for(let index=0;index<list.length;index+=1){
-    const item=list[index]
+  const token=saveSelection('tiktok-search',list)
+  const rows=list.map((item,index)=>{
     const username=item.author?.unique_id||'usuario'
-    const original=`https://www.tiktok.com/@${username}/video/${item.id}`
     const stats=item.stats||{}
-    let image
-    try{image=await fetchImageBuffer(item.cover)}catch{image=await getFallbackTikTokCover()}
-    cards.push({
-      image,
-      title:`Resultados para: ${input}`,
-      body:[
-        '*TikTok - Resultado*','',
-        `➠ *Vídeo:* ${index+1}`,
-        `➠ *Título:* ${(item.title||'Sin título').slice(0,220)}`,
-        `➠ *Duración:* ${item.duration||'--'} segundos`,
-        `➠ *Región:* ${item.region||'--'}`,
-        `➠ *Autor:* ${username}`,
-        `➠ *Likes:* ${stats.likes||0}`,
-        `➠ *Comentarios:* ${stats.comments||0}`,
-        `➠ *Shares:* ${stats.shares||0}`,
-        `➠ *Reproducciones:* ${stats.views||0}`,
-        `➠ *URL:* ${original}`,'',
-        'Usa el botón para descargar/ver'
-      ].join('\n'),
-      footer:'Nero Bot',
-      buttons:[copyButton('Copy',`${config.prefix}tiktok ${original}`)]
-    })
-  }
-  try{
-    const yutaCards = cards.map(card => ({
-      img: card.image || card.img || null,
-      titulo: card.title || card.titulo || '',
-      body: card.body || card.caption || '',
-      footer: card.footer || 'Nero Bot • ArcadiaCorps',
-      botones: (card.buttons || card.botones || []).map(btn => {
-        if (btn.tipo) return btn
-        if (btn.name && btn.buttonParamsJson) {
-          const p = JSON.parse(btn.buttonParamsJson)
-          if (btn.name === 'cta_copy') return { tipo:'copy', texto:p.display_text, payload:p.copy_code }
-          if (btn.name === 'cta_url') return { tipo:'url', texto:p.display_text, payload:p.url }
-          return { tipo:'reply', texto:p.display_text, payload:p.id }
-        }
-        return btn
-      })
-    }))
-    await enviarCarrusel(ctx.sock,ctx.chat,
-      `🎥 *TikTok Buscador*\nResultados para: *${input}*`,
-      'Nero Bot • ArcadiaCorps',
-      yutaCards,
-      { quoted: null }
-    )
-    console.log('[TIKTOK-CARDS] Carrusel protobuf enviado.')
-  }catch(error){
-    console.error('[TIKTOK-CARDS] fallback:',error?.message||error)
-    const rows=list.map((item,index)=>{const username=item.author?.unique_id||'usuario';const original=`https://www.tiktok.com/@${username}/video/${item.id}`;return {title:`${index+1}. ${(item.title||'Sin título').slice(0,55)}`,description:`@${username} • ${item.duration||'--'}`,id:`${config.prefix}tiktok ${original}`}})
-    await sendInteractive(ctx.sock,ctx.chat,{title:'TikTok Buscador',body:`Resultados para: *${input}*`,footer:'Nero Bot',media:list[0]?.cover?{image:{url:list[0].cover}}:null,buttons:[singleSelect('Ver resultados',[{title:'TikTok',rows}])]},ctx.msg)
-  }
+    return {
+      header:`Resultado ${index+1}`,
+      title:(item.title||'Sin título').slice(0,80),
+      description:`@${username} • ${item.duration||'--'}s • ${stats.views||0} vistas`.slice(0,100),
+      id:`${config.prefix}ttget ${token} ${index}`
+    }
+  })
+  const first=list[0]
+  await sendInteractive(ctx.sock,ctx.chat,{
+    title:'TikTok Buscador',
+    body:`Resultados para: *${input}*\nSelecciona un video de la lista para descargarlo.`,
+    footer:'Nero Bot • ArcadiaCorps',
+    media:first?.cover?{image:{url:first.cover}}:null,
+    buttons:[singleSelect('Ver resultados',[{title:'Resultados de TikTok',rows}])]
+  },ctx.msg)
 })}}
+
+export const tiktokGet={name:'ttget',aliases:['tiktokget','ttselect'],async execute(ctx){return apiTask(ctx,async()=>{
+  let token,indexRaw
+  if(ctx.args.length>=2){[token,indexRaw]=ctx.args}else{
+    throw new Error('La selección venció o falta el identificador. Ejecuta .tts <búsqueda> nuevamente.')
+  }
+  const list=getSelection(token,'tiktok-search')
+  const item=list?.[Number(indexRaw)]
+  if(!item)throw new Error('La selección venció. Ejecuta .tts <búsqueda> nuevamente.')
+  const username=item.author?.unique_id||'usuario'
+  const original=`https://www.tiktok.com/@${username}/video/${item.id}`
+  await tiktok.execute({...ctx,args:[original]})
+})}}
+
 
 export const testcards={name:'testcards',aliases:[],async execute(ctx){if(!ctx.isOwner)throw new Error('Este comando es exclusivo para owners.');return apiTask(ctx,async()=>{
   const imageA=await sharp({create:{width:640,height:640,channels:3,background:'#6d28d9'}}).jpeg().toBuffer()
@@ -534,4 +509,4 @@ export const queueStatus={name:'cola',aliases:['queue'],async execute(ctx){await
 export const cancelDownload={name:'cancelardescarga',aliases:['cancelardl'],async execute(ctx){const removed=cancelUserJobs(ctx.sender);await ctx.sock.sendMessage(ctx.chat,{text:removed?`✅ Se cancelaron ${removed} descarga(s) tuyas en espera.`:'No tienes descargas esperando en la cola.'},{quoted:ctx.msg})}}
 export const clearQueue={name:'limpiarcola',aliases:['clearqueue'],async execute(ctx){if(!ctx.isStaff)throw new Error('Este comando es solo para owner y subowner.');const removed=clearWaitingQueues();await ctx.sock.sendMessage(ctx.chat,{text:`✅ Cola limpiada. Solicitudes eliminadas: ${removed}.`},{quoted:ctx.msg})}}
 
-export const downloadCommands=[play,playpick,ytmp3,ytmp4,spotify,spotifypick,ytmusic,ytmusicpick,apk,apkpick,apkmod,apkmodpick,facebook,instagram,twitch,threads,universal,pinterest,pinterestSearch,stickerSearch,stickerPack,tiktok,tiktokSearch,testcards,testcardsbtn,mediafire,mega,terabox,teraboxpick,anime,queueStatus,cancelDownload,clearQueue]
+export const downloadCommands=[play,playpick,ytmp3,ytmp4,spotify,spotifypick,ytmusic,ytmusicpick,apk,apkpick,apkmod,apkmodpick,facebook,instagram,twitch,threads,universal,pinterest,pinterestSearch,stickerSearch,stickerPack,tiktok,tiktokSearch,tiktokGet,mediafire,mega,terabox,teraboxpick,anime,queueStatus,cancelDownload,clearQueue]

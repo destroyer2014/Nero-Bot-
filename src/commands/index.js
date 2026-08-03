@@ -8,8 +8,11 @@ import { testCarousel, testModernInteractive } from './debug.js'
 import { aiCommands } from './ai.js'
 import { animeCommands } from './anime.js'
 import { ownerCommands } from './owner.js'
+import { reportCommand } from './report.js'
+import { subbotCommands } from './subbots.js'
+import { modeCommands } from './mode.js'
 
-const commands = [menu, ping, info, testCarousel, testModernInteractive, ...downloadCommands, ...toolCommands, ...aiCommands, ...animeCommands, ...moderationCommands, ...ownerCommands]
+const commands = [menu, ping, info, reportCommand, ...modeCommands, ...subbotCommands, ...downloadCommands, ...toolCommands, ...aiCommands, ...animeCommands, ...moderationCommands, ...ownerCommands]
 const commandMap = new Map()
 for (const command of commands) {
   commandMap.set(command.name, command)

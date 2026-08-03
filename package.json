@@ -1,7 +1,7 @@
 {
   "name": "nero-bot",
-  "version": "1.7.2",
-  "description": "Nero Bot v1.7.1: migración al Baileys funcional de Yuta con carrusel protobuf estable",
+  "version": "1.8.1",
+  "description": "Nero Bot v1.8.1: subbots persistentes, TikTok seleccionable, reportes y nuevo menú",
   "type": "module",
   "main": "src/index.js",
   "scripts": {

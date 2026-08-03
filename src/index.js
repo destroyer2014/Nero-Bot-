@@ -17,6 +17,11 @@ import { findCommand } from './commands/index.js'
 import { getPermissionLevel, isOwner, isStaff, isSubOwner } from './lib/permissions.js'
 import { moderateIncoming } from './lib/nsfwGuard.js'
 import { getGroup } from './lib/groupStore.js'
+import { rememberError } from './lib/errorReports.js'
+import { getGroupPrincipal } from './lib/principalStore.js'
+import { consumeSubbotEvents } from './lib/subbotEvents.js'
+import { sendInteractive, copyButton } from './lib/interactive.js'
+import { getInstanceMode, privateCommandsAllowed } from './lib/modeStore.js'
 
 const logger = pino({ level: process.env.BAILEYS_LOG_LEVEL || 'silent' })
 const sessionPath = path.resolve('sessions', config.sessionName)
@@ -179,6 +184,23 @@ async function startNeroBot() {
 
   sock.ev.on('creds.update', saveCreds)
 
+  const eventTimer = setInterval(() => consumeSubbotEvents(async event => {
+    if (!event?.chat) return
+    if (event.type === 'pairing-code') {
+      await sendInteractive(sock, event.chat, {
+        title: 'NERO • Vinculación de subbot',
+        body: `✅ Sesión para: +${event.phone}\n\nCódigo: *${event.code}*\n\nEn WhatsApp abre Dispositivos vinculados > Vincular con número.`,
+        footer: 'Nero Bot • El código vence pronto',
+        buttons: [copyButton('Copiar código', event.code)]
+      }, null).catch(() => sock.sendMessage(event.chat, { text: `🔐 *NERO*\nSesión: +${event.phone}\nCódigo: *${event.code}*` }))
+    } else if (event.type === 'connected') {
+      await sock.sendMessage(event.chat, { text: `✅ *Ahora eres subbot de Nero.*\nCuenta: +${event.phone}\nLa instancia quedó guardada y activa con PM2.` }).catch(() => {})
+    } else if (event.type === 'deleted') {
+      await sock.sendMessage(event.chat, { text: `🗑️ La sesión del subbot +${event.phone} fue eliminada del VPS.\nMotivo: ${event.reason || 'sesión cerrada'}` }).catch(() => {})
+    }
+  }).catch(error => console.error('[SUBBOT EVENTS]', error)), 1500)
+  eventTimer.unref()
+
   // El código de vinculación puede solicitarse inmediatamente después
   // de crear el socket. Un breve margen evita carreras durante el arranque.
   if (needsPairing && !pairingCodeRequested) {
@@ -297,6 +319,20 @@ async function startNeroBot() {
         const command = findCommand(rawCommand)
         if (!command) continue
 
+        const isPrivateChat = !chat.endsWith('@g.us')
+        const instanceMode = getInstanceMode('principal', '')
+        if (isPrivateChat && instanceMode === 'groups' && !privateCommandsAllowed(rawCommand)) {
+          await sock.sendMessage(chat, {
+            text: '🔒 *Nero está configurado en modo Solo grupos.*\nEste comando no está disponible en chats privados.'
+          }, { quoted: msg }).catch(() => {})
+          continue
+        }
+
+        if (chat.endsWith('@g.us')) {
+          const chosen = getGroupPrincipal(chat) || 'principal'
+          if (chosen !== 'principal') continue
+        }
+
         await command.execute({
           sock,
           msg,
@@ -307,13 +343,18 @@ async function startNeroBot() {
           permissionLevel: getPermissionLevel(sender),
           isOwner: isOwner(sender),
           isSubOwner: isSubOwner(sender),
-          isStaff: isStaff(sender)
+          isStaff: isStaff(sender),
+          instanceType: 'principal',
+          instanceId: 'principal'
         })
       } catch (error) {
         console.error('Error procesando mensaje:', error)
         const chat = resolveChatJid(msg)
+        const sender = await resolveSenderIdentity(sock, msg, chat).catch(() => resolveSenderJid(msg))
+        const commandText = extractText(msg.message || {})
+        const code = rememberError({ sender, chat, command: commandText.split(/\s+/)[0] || '', error, instanceType: 'principal' })
         if (chat) {
-          await sock.sendMessage(chat, { text: '❌ Ocurrió un error al ejecutar el comando.' }, { quoted: msg }).catch(() => {})
+          await sock.sendMessage(chat, { text: `❌ Ocurrió un error al ejecutar el comando.\n\nCódigo: *${code}*\nPara reportarlo usa: *.reportar <motivo>*` }, { quoted: msg }).catch(() => {})
         }
       }
     }
