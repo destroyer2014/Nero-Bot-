@@ -11,8 +11,10 @@ import { ownerCommands } from './owner.js'
 import { reportCommand } from './report.js'
 import { subbotCommands } from './subbots.js'
 import { modeCommands } from './mode.js'
+import { favoriteCommands } from './favorites.js'
+import { reactionCommands } from './reactions.js'
 
-const commands = [menu, ping, info, reportCommand, ...modeCommands, ...subbotCommands, ...downloadCommands, ...toolCommands, ...aiCommands, ...animeCommands, ...moderationCommands, ...ownerCommands]
+const commands = [menu, ping, info, reportCommand, ...modeCommands, ...favoriteCommands, ...reactionCommands, ...subbotCommands, ...downloadCommands, ...toolCommands, ...aiCommands, ...animeCommands, ...moderationCommands, ...ownerCommands]
 const commandMap = new Map()
 for (const command of commands) {
   commandMap.set(command.name, command)

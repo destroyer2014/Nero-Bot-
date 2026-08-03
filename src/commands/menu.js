@@ -3,10 +3,98 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import config from '../../config.js'
 import { formatDateTime, jidToNumber } from '../lib/format.js'
-const __dirname=path.dirname(fileURLToPath(import.meta.url));const projectRoot=path.resolve(__dirname,'../..')
-const deco='ㅤۚ𑁯ׂᰍ  ☕ ᳴   ׅ  ׄʚ   ̶ '
-const item=(cmd,desc)=>`${deco}*${cmd}*\n> ✦ ${desc}`
-const entries=[
- ['.tiktok • .tt + [url]','Descarga videos de TikTok.'],['.ttimg • .ttmp3 + [url]','Descargar fotos/audio de un post de TikTok.'],['.tts • .tiktoks + [búsqueda]','Buscar videos de TikTok en una lista seleccionable.'],['.mediafire • .mf + [url]','Descargar un archivo de MediaFire.'],['.mega • .meganz + [url]','Descargar un archivo de Mega.nz.'],['.terabox • .tera + [url]','Descargar un archivo de Terabox.'],['.ytmp3 • .play + [nombre o url]','Descargar audio de YouTube.'],['.ytmp4 • .play2 + [nombre o url]','Descargar video de YouTube.'],['.yts • .ytsdl + [búsqueda]','Busca en YouTube y elige audio/video.'],['.spotify • .ytmusic + [búsqueda]','Busca y descarga música.'],['.fb • .facebook + [url]','Descargar videos de Facebook.'],['.twitter • .x + [url]','Descargar contenido de Twitter/X.'],['.hitube • .multidl + [url]','Descarga multi-red.'],['.ig • .instagram + [url]','Descargar contenido de Instagram.'],['.apk • .modapk + [nombre]','Descargar APKs.'],['.gitclone + [url]','Descargar repositorios de GitHub.'],['.npmdl + [paquete]','Descargar paquetes desde NPM.'],['.animelinks • .animedl + [nombre] [ep]','Ver enlaces de anime.'],['.pinterest • .pin + [búsqueda o url]','Buscar o descargar imágenes de Pinterest.'],['.sticker • .s','Crear sticker.'],['.stickersearch','Buscar y descargar paquetes de stickers.'],['.ia • .gemini • .claude • .qwen','Comandos de inteligencia artificial.'],['.editimg • .imgprompt','Editar imágenes y generar prompts.'],['.antinsfw • .antilink','Seguridad y moderación.'],['.bienvenida • .despedida','Configurar entradas y salidas.'],['.promote • .demote • .kick','Administrar participantes.'],['.code','Crear un subbot con código de vinculación NERO.'],['.bots','Ver subbots, uptime y dispositivo.'],['.setprincipal • .setbot','Elegir el bot principal de este grupo.'],['.principal • .resetprincipal','Consultar o restablecer la instancia principal.'],['.logout','Eliminar tu sesión de subbot del VPS.'],['.reportar + [motivo]','Reportar errores al Owner y SubOwner.'],['.modo','Elegir si esta instancia responde también en privado.'],['.vv • .ownerinfo • .restart','Herramientas del Owner.']
-]
-export const command={name:'menu',aliases:['help','comandos'],description:'Muestra todos los comandos.',async execute({sock,msg,chat,sender,instanceType}){const {date,time}=formatDateTime(config.timezone);const mention=`@${jidToNumber(sender)}`;const body=[`╭───── *${config.botName}* ─────╮`,`> Usuario: ${mention}`,`> Creador: ${config.creator}`,`> Versión: ${config.version}`,`> Instancia: ${instanceType==='subbot'||config.instanceType==='subbot'?'Subbot':'Bot principal'}`,`> Fecha: ${date}`,`> Hora: ${time}`,`> Web: ${config.website}`,'╰────────────────╯','',...entries.map(([c,d])=>item(c,d)),'╰──── ੈ₊˚༅༴╰────︶.︶ ⸙ ͛ ͎ ͛ ︶.︶ ੈ₊˚༅'].join('\n\n');try{const video=await fs.readFile(path.resolve(projectRoot,config.menuVideo));await sock.sendMessage(chat,{video,gifPlayback:true,caption:body,mentions:[sender]},{quoted:msg})}catch{await sock.sendMessage(chat,{text:body,mentions:[sender]},{quoted:msg})}}}
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
+const projectRoot = path.resolve(__dirname, '../..')
+const item = (command, description) => [`│ ✦ *${command}*`, `> ✐ ${description}`]
+const section = (title, entries) => [`╭─❧ *${title}*`, ...entries.flatMap(entry => item(...entry)), '╰────────────❧'].join('\n')
+
+const sections = {
+  descargas: [
+    ['.tiktok / .tt','Descarga videos de TikTok mediante enlace.'],
+    ['.ttimg / .ttmp3','Descarga fotos o audio de TikTok.'],
+    ['.tts / .tiktoks','Busca TikToks en una lista seleccionable.'],
+    ['.play / .ytmp3 / .ytmp4','Busca y descarga audio o video de YouTube.'],
+    ['.spotify / .ytmusic','Busca y descarga música.'],
+    ['.instagram / .facebook / .twitter','Descarga contenido de redes sociales.'],
+    ['.mediafire / .mega / .terabox','Descarga archivos desde enlaces.'],
+    ['.gitclone / .npmdl','Descarga repositorios o paquetes NPM.'],
+    ['.apk / .modapk','Busca y descarga APK.'],
+    ['.animelinks / .animedl','Busca enlaces de episodios de anime.'],
+    ['.pinterest / .pin','Busca o descarga imágenes de Pinterest.']
+  ],
+  herramientas: [
+    ['.sticker / .s','Crea un sticker.'],
+    ['.stickersearch','Busca y descarga paquetes de stickers.'],
+    ['.hd / .upscale / .restaurar','Mejora o restaura imágenes.'],
+    ['.convertir / .comprimir / .removebg','Convierte, comprime o elimina fondos.'],
+    ['.qr / .ytthumb / .ssweb','Genera QR, miniaturas o capturas web.'],
+    ['.traducir / .ocr / .transcribir','Traduce, lee imágenes o transcribe audios.'],
+    ['.fav','Muestra tus comandos favoritos.'],
+    ['.favadd / .favdel','Añade o elimina comandos favoritos.']
+  ],
+  inteligencia_artificial: [
+    ['.ia / .gemini / .claude / .qwen','Conversa con los modelos de IA.'],
+    ['.bot','Resume, corrige o analiza un mensaje citado.'],
+    ['.imgprompt','Convierte una imagen en una descripción.'],
+    ['.editimg','Edita una imagen con cola y cooldown.'],
+    ['.editqueue / .cancelaredit','Consulta o cancela una edición.']
+  ],
+  anime_y_reacciones: [
+    ['.animenews / .animeschedule','Noticias y calendario de anime.'],
+    ['.neko / .bluearchive','Imágenes anime aleatorias.'],
+    ['.reacciones','Abre la lista de acciones con GIF y traducción al español.']
+  ],
+  grupos_y_seguridad: [
+    ['.antinsfw / .antilink','Seguridad y moderación.'],
+    ['.warn / .warns / .resetwarn','Administra advertencias.'],
+    ['.bienvenida / .despedida','Configura entradas y salidas.'],
+    ['.setbienvenida / .setdespedida','Personaliza los mensajes.'],
+    ['.promote / .demote / .kick','Administra participantes.'],
+    ['.abrir / .cerrar','Abre o cierra el grupo.'],
+    ['.tagall / .hidetag','Menciona a los participantes.'],
+    ['.modo','Configura respuestas en privado.']
+  ],
+  subbots: [
+    ['.code','Genera un código NERO para crear un subbot.'],
+    ['.bots','Muestra subbots, uptime y dispositivo.'],
+    ['.setprincipal / .setbot','Elige la instancia principal del grupo.'],
+    ['.principal / .resetprincipal','Consulta o restablece la instancia.'],
+    ['.logout','Cierra y elimina la sesión del subbot.']
+  ],
+  soporte_y_owner: [
+    ['.reportar','Envía un reporte al Owner y SubOwner.'],
+    ['.vv / .ownerinfo / .restart','Herramientas exclusivas del Owner.']
+  ]
+}
+
+export const command = {
+  name: 'menu', aliases: ['help','comandos'], description: 'Muestra todos los comandos.',
+  async execute({ sock, msg, chat, sender, instanceType }) {
+    const { date, time } = formatDateTime(config.timezone)
+    const mention = `@${jidToNumber(sender)}`
+    const uptime = Math.floor(process.uptime())
+    const hours = Math.floor(uptime / 3600)
+    const minutes = Math.floor((uptime % 3600) / 60)
+    const body = [
+      `╭─❧ *${config.botName}*`,
+      `│ ✐ *Usuario ›* ${mention}`,
+      `│ ✐ *Creador ›* ${config.creator}`,
+      `│ ✐ *Versión ›* ${config.version}`,
+      `│ ✐ *Instancia ›* ${instanceType === 'subbot' || config.instanceType === 'subbot' ? 'Subbot' : 'Bot principal'}`,
+      `│ ✐ *Tiempo activo ›* ${hours} h ${minutes} min`,
+      `│ ✐ *Link ›* ${config.website}`,
+      `│ ✐ *Fecha ›* ${date}`,
+      `│ ✐ *Hora ›* ${time}`,
+      '╰────────────❧',
+      '',
+      ...Object.entries(sections).flatMap(([name, entries]) => [section(name.replaceAll('_',' ').toUpperCase(), entries), ''])
+    ].join('\n')
+    try {
+      const video = await fs.readFile(path.resolve(projectRoot, config.menuVideo))
+      await sock.sendMessage(chat, { video, gifPlayback: true, caption: body, mentions: [sender] }, { quoted: msg })
+    } catch {
+      await sock.sendMessage(chat, { text: body, mentions: [sender] }, { quoted: msg })
+    }
+  }
+}

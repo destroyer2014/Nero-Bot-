@@ -1,7 +1,7 @@
 {
   "name": "nero-bot",
-  "version": "1.8.1",
-  "description": "Nero Bot v1.8.1: subbots persistentes, TikTok seleccionable, reportes y nuevo menú",
+  "version": "1.8.2",
+  "description": "Nero Bot v1.8.2: menú clásico por secciones, reacciones anime y favoritos",
   "type": "module",
   "main": "src/index.js",
   "scripts": {
