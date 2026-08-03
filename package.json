@@ -1,7 +1,7 @@
 {
   "name": "nero-bot",
-  "version": "1.6.9",
-  "description": "Nero Bot v1.6.9: carrusel protobuf adaptado desde simple.js sin modificar Ultra Baileys",
+  "version": "1.7.0",
+  "description": "Nero Bot v1.7.0: migración de Ultra a NexusTechPro Baileys con soporte para carruseles y álbumes",
   "type": "module",
   "main": "src/index.js",
   "scripts": {
@@ -17,6 +17,6 @@
     "dotenv": "^16.6.1",
     "sharp": "^0.34.3",
     "node-webpmux": "^3.2.1",
-    "@whiskeysockets/baileys": "github:russellxz/ultra-baileys#master"
+    "@whiskeysockets/baileys": "npm:@nexustechpro/baileys@2.2.0"
   }
 }

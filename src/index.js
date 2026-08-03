@@ -154,8 +154,8 @@ async function startNeroBot() {
     pairingCodeRequested = false
   }
 
-  // Conexión original de Ultra Baileys que funcionó con código.
-  // No fijamos `version` ni mezclamos forks externos.
+  // NexusTechPro se instala como reemplazo compatible de @whiskeysockets/baileys.
+  // Conservamos los imports para reducir cambios y mantener la sesión actual.
   const sock = makeWASocket({
     auth: state,
     logger,
@@ -170,7 +170,7 @@ async function startNeroBot() {
 
   sock.ev.on('creds.update', saveCreds)
 
-  // El fork documenta que el código puede solicitarse inmediatamente después
+  // El código de vinculación puede solicitarse inmediatamente después
   // de crear el socket. Un breve margen evita carreras durante el arranque.
   if (needsPairing && !pairingCodeRequested) {
     pairingCodeRequested = true

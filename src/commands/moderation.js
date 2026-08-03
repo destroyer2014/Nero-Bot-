@@ -10,7 +10,7 @@ function contextInfo(ctx){
 }
 function targetFromMsg(ctx){
   const c=contextInfo(ctx)
-  // Ultra puede entregar menciones como @lid. Ese JID es válido para
+  // Baileys puede entregar menciones como @lid. Ese JID es válido para
   // groupParticipantsUpdate y no debe convertirse a @s.whatsapp.net.
   return c?.mentionedJid?.[0]||c?.participant||''
 }
