@@ -114,7 +114,9 @@ export async function sendCarousel(
     messageVersion = 1,
     cardLimit = 10,
     omitCardFooter = false,
-    omitNativeFlowWhenEmpty = false
+    omitNativeFlowWhenEmpty = false,
+    banner = null,
+    bannerTitle = ''
   },
   quoted = null
 ) {
@@ -161,6 +163,19 @@ export async function sendCarousel(
     preparedCards.push(proto.Message.InteractiveMessage.create(cardFields))
   }
 
+  let bannerImageMessage = null
+  if (banner) {
+    try {
+      const preparedBanner = await prepareWAMessageMedia(
+        { image: Buffer.isBuffer(banner) ? banner : banner?.url ? banner : { url: banner } },
+        { upload: sock.waUploadToServer }
+      )
+      bannerImageMessage = preparedBanner.imageMessage
+    } catch (error) {
+      console.error(`[${debugLabel}] Error banner:`, error?.message || error)
+    }
+  }
+
   const messageContent = proto.Message.fromObject({
     viewOnceMessage: {
       message: {
@@ -168,7 +183,11 @@ export async function sendCarousel(
         interactiveMessage: proto.Message.InteractiveMessage.create({
           body: proto.Message.InteractiveMessage.Body.create({ text: body || '' }),
           footer: proto.Message.InteractiveMessage.Footer.create({ text: footer || '' }),
-          header: proto.Message.InteractiveMessage.Header.create({ hasMediaAttachment: false }),
+          header: proto.Message.InteractiveMessage.Header.create({
+            title: bannerTitle || '',
+            hasMediaAttachment: Boolean(bannerImageMessage),
+            imageMessage: bannerImageMessage || null
+          }),
           carouselMessage: proto.Message.InteractiveMessage.CarouselMessage.create({
             cards: preparedCards,
             messageVersion
@@ -195,6 +214,7 @@ export async function sendCarousel(
     chat,
     cardCount: preparedCards.length,
     messageVersion,
+    hasBanner: Boolean(bannerImageMessage),
     socketUser: sock.user,
     normalizedUserJid,
     messageId: generated.key?.id,

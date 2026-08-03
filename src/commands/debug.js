@@ -48,6 +48,7 @@ export const testCarousel = {
   name: 'testcarousel',
   aliases: ['carouseltest'],
   async execute(ctx) {
+    if (!ctx.isOwner) throw new Error('Este comando es exclusivo para owners.')
     const imageA = await makeCardImage('A', '#6d28d9')
     const imageB = await makeCardImage('B', '#be123c')
 
@@ -129,6 +130,7 @@ export const testModernInteractive = {
   name: 'testmodern',
   aliases: ['testnative', 'modernui'],
   async execute(ctx) {
+    if (!ctx.isOwner) throw new Error('Este comando es exclusivo para owners.')
     await announce(ctx,
       '🧬 *Prueba de formatos nativos iniciada*\n\n' +
       'Estas pruebas no son carruseles. Sirven para comprobar qué familias de mensajes interactivos acepta esta sesión/cliente de WhatsApp.'

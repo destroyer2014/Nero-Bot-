@@ -1,3 +1,10 @@
+# v1.6.5
+- Carrusel TikTok con banner local y media por tarjeta.
+- Comandos de diagnóstico restringidos al owner.
+- Resolución de administrador y menciones @lid corregida.
+- Respuestas visibles para promote, demote y kick.
+- Ultra Baileys y conexión por código sin cambios.
+
 # Historial de cambios de Nero Bot
 
 ## v1.6.4

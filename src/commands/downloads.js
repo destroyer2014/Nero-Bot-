@@ -6,6 +6,8 @@ import { cancelUserJobs, clearWaitingQueues, formatQueueStatus, runDownloadJob }
 import { getSelection, saveSelection } from '../lib/selectionCache.js'
 import sharp from 'sharp'
 import Webpmux from 'node-webpmux'
+import fs from 'node:fs/promises'
+import path from 'node:path'
 
 const usage = (name, value) => `Uso: *${config.prefix}${name} ${value}*`
 const queryText = args => args.join(' ').trim()
@@ -401,7 +403,7 @@ export const tiktokSearch={name:'tiktoksearch',aliases:['ttsearch'],async execut
     })
   }
   try{
-    await sendCarousel(ctx.sock,ctx.chat,{body:`◯╰⇢ *TikTok-Buscador* «·«╮\nResultados para: *${input}*`,footer:'Nero Bot',cards,debugLabel:'TIKTOK-CARRUSEL',messageVersion:1},ctx.msg)
+    await sendCarousel(ctx.sock,ctx.chat,{body:`◯╰⇢ *TikTok-Buscador* «·«╮\nResultados para: *${input}*`,footer:'Nero Bot',cards,debugLabel:'TIKTOK-CARRUSEL',messageVersion:1,banner:await fs.readFile(path.resolve('assets','tiktok-banner.jpg')),bannerTitle:'TikTok Buscador'},ctx.msg)
   }catch(error){
     console.error('[TIKTOK-CARRUSEL] fallback:',error?.message||error)
     const rows=list.map((item,index)=>{const username=item.author?.unique_id||'usuario';const original=`https://www.tiktok.com/@${username}/video/${item.id}`;return {title:`${index+1}. ${(item.title||'Sin título').slice(0,55)}`,description:`@${username} • ${item.duration||'--'}`,id:`${config.prefix}tiktok ${original}`}})
@@ -409,10 +411,10 @@ export const tiktokSearch={name:'tiktoksearch',aliases:['ttsearch'],async execut
   }
 })}}
 
-export const testcards={name:'testcards',aliases:[],async execute(ctx){return apiTask(ctx,async()=>{
+export const testcards={name:'testcards',aliases:[],async execute(ctx){if(!ctx.isOwner)throw new Error('Este comando es exclusivo para owners.');return apiTask(ctx,async()=>{
   const imageA=await sharp({create:{width:640,height:640,channels:3,background:'#6d28d9'}}).jpeg().toBuffer()
   const imageB=await sharp({create:{width:640,height:640,channels:3,background:'#be123c'}}).jpeg().toBuffer()
-  await sendCarousel(ctx.sock,ctx.chat,{body:'Prueba de carrusel nativo de Ultra Baileys',footer:'Nero Bot',debugLabel:'TESTCARDS',cards:[
+  await sendCarousel(ctx.sock,ctx.chat,{body:'Prueba de carrusel nativo de Ultra Baileys',footer:'Nero Bot',debugLabel:'TESTCARDS',banner:await fs.readFile(path.resolve('assets','tiktok-banner.jpg')),bannerTitle:'Nero Carousel Test',cards:[
     {image:imageA,title:'Tarjeta 1',body:'Carrusel nativo sin depender de cards directas.',footer:'Nero Bot',buttons:[copyButton('Copy','.menu')]},
     {image:imageB,title:'Tarjeta 2',body:'Desliza horizontalmente para verla.',footer:'Nero Bot',buttons:[copyButton('Copy','.ping')]}
   ]},ctx.msg)
