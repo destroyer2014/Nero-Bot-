@@ -11,7 +11,7 @@ import {
   useMultiFileAuthState,
   fetchLatestBaileysVersion,
   makeCacheableSignalKeyStore
-} from '@itsliaaa/baileys'
+} from '@whiskeysockets/baileys'
 import config from '../config.js'
 import { extractText } from './lib/text.js'
 import { findCommand } from './commands/index.js'

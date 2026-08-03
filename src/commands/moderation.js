@@ -1,4 +1,4 @@
-import { jidNormalizedUser, downloadMediaMessage } from '@itsliaaa/baileys'
+import { jidNormalizedUser, downloadMediaMessage } from '@whiskeysockets/baileys'
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import { getGroup, patchGroup, getWarn, setWarn, resetWarn, saveTimer, clearTimer } from '../lib/groupStore.js'
