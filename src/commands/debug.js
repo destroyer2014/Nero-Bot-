@@ -1,7 +1,7 @@
 import sharp from 'sharp'
 import config from '../../config.js'
 import { sendCarousel, sendInteractive, quickReply, copyButton, urlButton, singleSelect } from '../lib/interactive.js'
-import { WAProto as proto, generateWAMessageFromContent } from '@whiskeysockets/baileys'
+import { WAProto as proto, generateWAMessageFromContent } from '@itsliaaa/baileys'
 
 const wait = ms => new Promise(resolve => setTimeout(resolve, ms))
 

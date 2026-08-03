@@ -1,4 +1,4 @@
-import { downloadMediaMessage, jidNormalizedUser } from '@whiskeysockets/baileys'
+import { downloadMediaMessage, jidNormalizedUser } from '@itsliaaa/baileys'
 import { requireEvoGbApiKey } from './api.js'
 import { getGroup, getWarn, setWarn } from './groupStore.js'
 

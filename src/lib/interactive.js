@@ -2,7 +2,7 @@ import {
   WAProto as proto,
   prepareWAMessageMedia,
   generateWAMessageFromContent
-} from '@whiskeysockets/baileys'
+} from '@itsliaaa/baileys'
 import fs from 'node:fs/promises'
 import path from 'node:path'
 
@@ -101,7 +101,7 @@ export async function sendInteractive(
 
 // Implementación portada directamente desde Yuta-Bot.
 // Socket, WAProto, prepareWAMessageMedia y generateWAMessageFromContent
-// pertenecen todos al mismo fork @whiskeysockets/baileys rc.9.
+// pertenecen todos al mismo fork @itsliaaa/baileys rc.9.
 export async function sendCarousel(
   sock,
   chat,

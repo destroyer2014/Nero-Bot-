@@ -1,4 +1,4 @@
-import { downloadMediaMessage } from '@whiskeysockets/baileys'
+import { downloadMediaMessage } from '@itsliaaa/baileys'
 import sharp from 'sharp'
 import config from '../../config.js'
 import { apiGet, evoGet, requireEvoGbApiKey } from '../lib/api.js'

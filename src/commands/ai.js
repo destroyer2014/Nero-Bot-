@@ -1,4 +1,4 @@
-import { downloadMediaMessage } from '@whiskeysockets/baileys'
+import { downloadMediaMessage } from '@itsliaaa/baileys'
 import config from '../../config.js'
 import { evoGet, requireEvoGbApiKey } from '../lib/api.js'
 import { unwrapMessage } from '../lib/text.js'

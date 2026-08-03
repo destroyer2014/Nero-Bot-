@@ -1,7 +1,7 @@
 {
   "name": "nero-bot",
-  "version": "1.6.1",
-  "description": "Nero Bot v1.6.1: conexión por código restaurada exactamente desde v1.5.3, conservando funciones actuales",
+  "version": "1.6.2",
+  "description": "Nero Bot v1.6.2: conexión por código restaurada desde v1.5.3 con imports Baileys consistentes y funciones actuales",
   "type": "module",
   "main": "src/index.js",
   "scripts": {
