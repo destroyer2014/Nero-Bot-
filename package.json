@@ -1,13 +1,12 @@
 {
   "name": "nero-bot",
-  "version": "1.6.8",
-  "description": "Nero Bot v1.6.8: compatibilidad Ultra Cards, corrección de ping y comandos Owner",
+  "version": "1.6.9",
+  "description": "Nero Bot v1.6.9: carrusel protobuf adaptado desde simple.js sin modificar Ultra Baileys",
   "type": "module",
   "main": "src/index.js",
   "scripts": {
     "start": "node src/index.js",
-    "dev": "node --watch src/index.js",
-    "postinstall": "node scripts/patch-ultra-cards.cjs"
+    "dev": "node --watch src/index.js"
   },
   "engines": {
     "node": ">=20"

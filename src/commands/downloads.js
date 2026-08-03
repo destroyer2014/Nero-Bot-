@@ -1,6 +1,7 @@
 import config from '../../config.js'
 import { apiGet, evoGet, ApiError } from '../lib/api.js'
-import { sendInteractive, sendCarousel, copyButton, quickReply, singleSelect, urlButton } from '../lib/interactive.js'
+import { sendInteractive, copyButton, quickReply, singleSelect, urlButton } from '../lib/interactive.js'
+import { sendCarousel } from '../lib/carousel.js'
 import { formatBytes, formatDuration, isLikelyUrl, pickDownloadUrl, sendImageAlbum, sendRemoteMedia } from '../lib/media.js'
 import { cancelUserJobs, clearWaitingQueues, formatQueueStatus, runDownloadJob } from '../lib/downloadQueue.js'
 import { getSelection, saveSelection } from '../lib/selectionCache.js'
@@ -403,15 +404,13 @@ export const tiktokSearch={name:'tiktoksearch',aliases:['ttsearch'],async execut
     })
   }
   try{
-    await ctx.sock.sendMessage(ctx.chat,{
-      title:'NERO TIKTOK',
-      text:`🎥 *TikTok Buscador*
-Resultados para: *${input}*`,
+    await sendCarousel(ctx.sock,ctx.chat,{
+      body:`🎥 *TikTok Buscador*\nResultados para: *${input}*`,
       footer:'Nero Bot • ArcadiaCorps',
       cards,
       messageVersion:1
-    },{quoted:ctx.msg})
-    console.log('[TIKTOK-CARDS] Carrusel enviado con sock.sendMessage({ cards }).')
+    },ctx.msg)
+    console.log('[TIKTOK-CARDS] Carrusel protobuf enviado.')
   }catch(error){
     console.error('[TIKTOK-CARDS] fallback:',error?.message||error)
     const rows=list.map((item,index)=>{const username=item.author?.unique_id||'usuario';const original=`https://www.tiktok.com/@${username}/video/${item.id}`;return {title:`${index+1}. ${(item.title||'Sin título').slice(0,55)}`,description:`@${username} • ${item.duration||'--'}`,id:`${config.prefix}tiktok ${original}`}})
@@ -422,16 +421,15 @@ Resultados para: *${input}*`,
 export const testcards={name:'testcards',aliases:[],async execute(ctx){if(!ctx.isOwner)throw new Error('Este comando es exclusivo para owners.');return apiTask(ctx,async()=>{
   const imageA=await sharp({create:{width:640,height:640,channels:3,background:'#6d28d9'}}).jpeg().toBuffer()
   const imageB=await sharp({create:{width:640,height:640,channels:3,background:'#be123c'}}).jpeg().toBuffer()
-  await ctx.sock.sendMessage(ctx.chat,{
-    title:'NERO CAROUSEL TEST',
-    text:'Prueba del soporte cards portado a Ultra Baileys.',
+  await sendCarousel(ctx.sock,ctx.chat,{
+    body:'Prueba del carrusel protobuf adaptado desde simple.js.',
     footer:'Nero Bot • ArcadiaCorps',
     messageVersion:1,
     cards:[
-      {image:imageA,title:'Tarjeta 1',body:'Carrusel generado con sock.sendMessage({ cards }).',footer:'Nero Bot',buttons:[copyButton('Copy','.menu')]},
+      {image:imageA,title:'Tarjeta 1',body:'Carrusel generado directamente con WAProto.',footer:'Nero Bot',buttons:[copyButton('Copy','.menu')]},
       {image:imageB,title:'Tarjeta 2',body:'Desliza horizontalmente para verla.',footer:'Nero Bot',buttons:[copyButton('Copy','.ping')]}
     ]
-  },{quoted:ctx.msg})
+  },ctx.msg)
 })}}
 export const testcardsbtn={name:'testcardsbtn',aliases:[],async execute(ctx){return testcards.execute(ctx)}}
 
