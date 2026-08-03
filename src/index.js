@@ -7,7 +7,9 @@ import { Boom } from '@hapi/boom'
 import makeWASocket, {
   DisconnectReason,
   jidNormalizedUser,
-  useMultiFileAuthState
+  useMultiFileAuthState,
+  fetchLatestBaileysVersion,
+  makeCacheableSignalKeyStore
 } from '@itsliaaa/baileys'
 import config from '../config.js'
 import { extractText } from './lib/text.js'
@@ -154,12 +156,19 @@ async function startNeroBot() {
     pairingCodeRequested = false
   }
 
-  // NexusTechPro se instala como reemplazo compatible de @whiskeysockets/baileys.
-  // Conservamos los imports para reducir cambios y mantener la sesión actual.
+  const { version } = await fetchLatestBaileysVersion()
+  console.log('[BAILEYS] Usando versión:', version.join('.'))
+
   const sock = makeWASocket({
-    auth: state,
+    version,
     logger,
     printQRInTerminal: false,
+    auth: {
+      creds: state.creds,
+      keys: makeCacheableSignalKeyStore(state.keys, logger)
+    },
+    browser: ['Ubuntu', 'Chrome', '20.0.04'],
+    getMessage: async () => undefined,
     markOnlineOnConnect: false,
     syncFullHistory: false,
     generateHighQualityLinkPreview: true,

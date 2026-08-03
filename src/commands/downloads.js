@@ -1,7 +1,7 @@
 import config from '../../config.js'
 import { apiGet, evoGet, ApiError } from '../lib/api.js'
 import { sendInteractive, copyButton, quickReply, singleSelect, urlButton } from '../lib/interactive.js'
-import { sendCarousel } from '../lib/carousel.js'
+import { enviarCarrusel } from '../lib/uiBuilder.js'
 import { formatBytes, formatDuration, isLikelyUrl, pickDownloadUrl, sendImageAlbum, sendRemoteMedia } from '../lib/media.js'
 import { cancelUserJobs, clearWaitingQueues, formatQueueStatus, runDownloadJob } from '../lib/downloadQueue.js'
 import { getSelection, saveSelection } from '../lib/selectionCache.js'
@@ -404,12 +404,28 @@ export const tiktokSearch={name:'tiktoksearch',aliases:['ttsearch'],async execut
     })
   }
   try{
-    await sendCarousel(ctx.sock,ctx.chat,{
-      body:`🎥 *TikTok Buscador*\nResultados para: *${input}*`,
-      footer:'Nero Bot • ArcadiaCorps',
-      cards,
-      messageVersion:1
-    },ctx.msg)
+    const yutaCards = cards.map(card => ({
+      img: card.image || card.img || null,
+      titulo: card.title || card.titulo || '',
+      body: card.body || card.caption || '',
+      footer: card.footer || 'Nero Bot • ArcadiaCorps',
+      botones: (card.buttons || card.botones || []).map(btn => {
+        if (btn.tipo) return btn
+        if (btn.name && btn.buttonParamsJson) {
+          const p = JSON.parse(btn.buttonParamsJson)
+          if (btn.name === 'cta_copy') return { tipo:'copy', texto:p.display_text, payload:p.copy_code }
+          if (btn.name === 'cta_url') return { tipo:'url', texto:p.display_text, payload:p.url }
+          return { tipo:'reply', texto:p.display_text, payload:p.id }
+        }
+        return btn
+      })
+    }))
+    await enviarCarrusel(ctx.sock,ctx.chat,
+      `🎥 *TikTok Buscador*\nResultados para: *${input}*`,
+      'Nero Bot • ArcadiaCorps',
+      yutaCards,
+      { quoted: null }
+    )
     console.log('[TIKTOK-CARDS] Carrusel protobuf enviado.')
   }catch(error){
     console.error('[TIKTOK-CARDS] fallback:',error?.message||error)
@@ -421,15 +437,15 @@ export const tiktokSearch={name:'tiktoksearch',aliases:['ttsearch'],async execut
 export const testcards={name:'testcards',aliases:[],async execute(ctx){if(!ctx.isOwner)throw new Error('Este comando es exclusivo para owners.');return apiTask(ctx,async()=>{
   const imageA=await sharp({create:{width:640,height:640,channels:3,background:'#6d28d9'}}).jpeg().toBuffer()
   const imageB=await sharp({create:{width:640,height:640,channels:3,background:'#be123c'}}).jpeg().toBuffer()
-  await sendCarousel(ctx.sock,ctx.chat,{
-    body:'Prueba del carrusel protobuf adaptado desde simple.js.',
-    footer:'Nero Bot • ArcadiaCorps',
-    messageVersion:1,
-    cards:[
-      {image:imageA,title:'Tarjeta 1',body:'Carrusel generado directamente con WAProto.',footer:'Nero Bot',buttons:[copyButton('Copy','.menu')]},
-      {image:imageB,title:'Tarjeta 2',body:'Desliza horizontalmente para verla.',footer:'Nero Bot',buttons:[copyButton('Copy','.ping')]}
-    ]
-  },ctx.msg)
+  await enviarCarrusel(ctx.sock,ctx.chat,
+    'Prueba exacta del carrusel de Yuta Bot.',
+    'Nero Bot • ArcadiaCorps',
+    [
+      {img:imageA,titulo:'Tarjeta 1',body:'Código exacto de uiBuilder.js de Yuta.',footer:'Nero Bot',botones:[{tipo:'copy',texto:'Copiar',payload:'.menu'}]},
+      {img:imageB,titulo:'Tarjeta 2',body:'Desliza horizontalmente para verla.',footer:'Nero Bot',botones:[{tipo:'copy',texto:'Copiar',payload:'.ping'}]}
+    ],
+    { quoted: null }
+  )
 })}}
 export const testcardsbtn={name:'testcardsbtn',aliases:[],async execute(ctx){return testcards.execute(ctx)}}
 

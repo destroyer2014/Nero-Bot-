@@ -1,6 +1,6 @@
 {
   "name": "nero-bot",
-  "version": "1.7.1",
+  "version": "1.7.2",
   "description": "Nero Bot v1.7.1: migración al Baileys funcional de Yuta con carrusel protobuf estable",
   "type": "module",
   "main": "src/index.js",
@@ -17,6 +17,6 @@
     "dotenv": "^16.6.1",
     "sharp": "^0.34.3",
     "node-webpmux": "^3.2.1",
-    "@itsliaaa/baileys": "0.3.0-rc.9"
+    "@itsliaaa/baileys": "0.3.18"
   }
 }
