@@ -1,7 +1,7 @@
 {
   "name": "nero-bot",
-  "version": "1.5.6",
-  "description": "Nero Bot v1.5.6: Ultra Baileys con resolución dinámica de la versión WA Web para vinculación",
+  "version": "1.5.7",
+  "description": "Nero Bot v1.5.7: vinculación por QR con Ultra Baileys, sin modificar comandos ni funciones",
   "type": "module",
   "main": "src/index.js",
   "scripts": {

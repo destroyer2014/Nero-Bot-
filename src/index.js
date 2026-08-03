@@ -1,5 +1,4 @@
 import 'dotenv/config'
-import readline from 'node:readline/promises'
 import process from 'node:process'
 import path from 'node:path'
 import pino from 'pino'
@@ -79,40 +78,8 @@ async function resolveWaVersion() {
   }
 }
 
-let phoneNumber = null
-let pairingCodeRequested = false
 let reconnectTimer = null
 let reconnectAttempts = 0
-
-function cleanPhoneNumber(value = '') {
-  return String(value).replace(/\D/g, '')
-}
-
-async function askPhoneNumber() {
-  if (phoneNumber) return phoneNumber
-
-  const configuredNumber = cleanPhoneNumber(process.env.NERO_PHONE || '')
-  if (configuredNumber.length >= 8) {
-    phoneNumber = configuredNumber
-    return phoneNumber
-  }
-
-  const rl = readline.createInterface({ input: process.stdin, output: process.stdout })
-  try {
-    const answer = await rl.question(
-      'Escribe el número de la cuenta a vincular, con código de país y solo dígitos (ejemplo 51987654321): '
-    )
-    const phone = cleanPhoneNumber(answer)
-    if (phone.length < 8 || phone.length > 15) {
-      throw new Error('El número debe tener entre 8 y 15 dígitos, incluyendo el código de país.')
-    }
-    phoneNumber = phone
-    return phoneNumber
-  } finally {
-    rl.close()
-  }
-}
-
 
 function isGroupJid(jid = '') {
   return typeof jid === 'string' && jid.endsWith('@g.us')
@@ -209,11 +176,6 @@ async function startNeroBot() {
   const { state, saveCreds } = await useMultiFileAuthState(sessionPath)
   const needsPairing = !state.creds.registered
 
-  if (needsPairing) {
-    await askPhoneNumber()
-    pairingCodeRequested = false
-  }
-
   // Usamos la misma librería para el socket y para construir mensajes
   // interactivos/carruseles. Mezclar dos implementaciones de Baileys hacía
   // que WhatsApp aceptara la reacción, pero descartara el carrusel.
@@ -225,44 +187,29 @@ async function startNeroBot() {
       keys: makeCacheableSignalKeyStore(state.keys, logger)
     },
     logger,
-    printQRInTerminal: false,
+    printQRInTerminal: true,
     markOnlineOnConnect: false,
     syncFullHistory: false,
     generateHighQualityLinkPreview: true,
     connectTimeoutMs: 60_000,
     defaultQueryTimeoutMs: undefined,
     keepAliveIntervalMs: 10_000,
-    browser: ['Nero Bot', 'Chrome', '1.5.6'],
+    browser: ['Nero Bot', 'Chrome', '1.5.7'],
     getMessage: async () => undefined
   })
 
   sock.ev.on('creds.update', saveCreds)
 
-  // El fork documenta que el código puede solicitarse inmediatamente después
-  // de crear el socket. Un breve margen evita carreras durante el arranque.
-  if (needsPairing && !pairingCodeRequested) {
-    pairingCodeRequested = true
-    await new Promise(resolve => setTimeout(resolve, 1500))
-    try {
-      const code = await sock.requestPairingCode(phoneNumber)
-      console.log(`\n🔐 Código de vinculación de ${config.botName}: ${formatPairingCode(code)}\n`)
-      console.log('En WhatsApp: Dispositivos vinculados > Vincular un dispositivo > Vincular con número de teléfono.\n')
-      console.log('Mantén este proceso abierto hasta que aparezca el mensaje de conexión exitosa.\n')
-    } catch (error) {
-      pairingCodeRequested = false
-      const statusCode = new Boom(error)?.output?.statusCode
-      console.error(`❌ No se pudo generar el código${statusCode ? ` (HTTP ${statusCode})` : ''}:`, error?.message || error)
-      throw error
-    }
+  if (needsPairing) {
+    console.log('\n📱 Modo de vinculación por QR activado.')
+    console.log('En WhatsApp: Dispositivos vinculados > Vincular un dispositivo y escanea el QR de la terminal.\n')
   }
 
   sock.ev.on('connection.update', async update => {
     const { connection, lastDisconnect } = update
 
     if (connection === 'open') {
-      pairingCodeRequested = false
       reconnectAttempts = 0
-      phoneNumber = null
       console.log(`✅ ${config.botName} conectado como ${sock.user?.id || 'cuenta vinculada'}`)
       console.log(`📌 Tipo de instancia: ${config.instanceType === 'subbot' ? 'Subbot' : 'Bot principal'}`)
     }
@@ -272,8 +219,6 @@ async function startNeroBot() {
       const loggedOut = statusCode === DisconnectReason.loggedOut
 
       if (loggedOut) {
-        pairingCodeRequested = false
-        phoneNumber = null
         console.error('❌ WhatsApp cerró la sesión. Elimina la carpeta de esta sesión y vuelve a vincular.')
         return
       }
