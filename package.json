@@ -1,12 +1,13 @@
 {
   "name": "nero-bot",
-  "version": "1.6.5",
-  "description": "Nero Bot v1.6.5: carrusel TikTok con banner, administración LID y diagnósticos solo owner",
+  "version": "1.6.6",
+  "description": "Nero Bot v1.6.6: soporte cards en Ultra Baileys y comandos Owner",
   "type": "module",
   "main": "src/index.js",
   "scripts": {
     "start": "node src/index.js",
-    "dev": "node --watch src/index.js"
+    "dev": "node --watch src/index.js",
+    "postinstall": "node scripts/patch-ultra-cards.cjs"
   },
   "engines": {
     "node": ">=20"

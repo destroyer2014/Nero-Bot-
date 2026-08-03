@@ -403,9 +403,17 @@ export const tiktokSearch={name:'tiktoksearch',aliases:['ttsearch'],async execut
     })
   }
   try{
-    await sendCarousel(ctx.sock,ctx.chat,{body:`◯╰⇢ *TikTok-Buscador* «·«╮\nResultados para: *${input}*`,footer:'Nero Bot',cards,debugLabel:'TIKTOK-CARRUSEL',messageVersion:1,banner:await fs.readFile(path.resolve('assets','tiktok-banner.jpg')),bannerTitle:'TikTok Buscador'},ctx.msg)
+    await ctx.sock.sendMessage(ctx.chat,{
+      title:'NERO TIKTOK',
+      text:`🎥 *TikTok Buscador*
+Resultados para: *${input}*`,
+      footer:'Nero Bot • ArcadiaCorps',
+      cards,
+      messageVersion:1
+    },{quoted:ctx.msg})
+    console.log('[TIKTOK-CARDS] Carrusel enviado con sock.sendMessage({ cards }).')
   }catch(error){
-    console.error('[TIKTOK-CARRUSEL] fallback:',error?.message||error)
+    console.error('[TIKTOK-CARDS] fallback:',error?.message||error)
     const rows=list.map((item,index)=>{const username=item.author?.unique_id||'usuario';const original=`https://www.tiktok.com/@${username}/video/${item.id}`;return {title:`${index+1}. ${(item.title||'Sin título').slice(0,55)}`,description:`@${username} • ${item.duration||'--'}`,id:`${config.prefix}tiktok ${original}`}})
     await sendInteractive(ctx.sock,ctx.chat,{title:'TikTok Buscador',body:`Resultados para: *${input}*`,footer:'Nero Bot',media:list[0]?.cover?{image:{url:list[0].cover}}:null,buttons:[singleSelect('Ver resultados',[{title:'TikTok',rows}])]},ctx.msg)
   }
@@ -414,12 +422,19 @@ export const tiktokSearch={name:'tiktoksearch',aliases:['ttsearch'],async execut
 export const testcards={name:'testcards',aliases:[],async execute(ctx){if(!ctx.isOwner)throw new Error('Este comando es exclusivo para owners.');return apiTask(ctx,async()=>{
   const imageA=await sharp({create:{width:640,height:640,channels:3,background:'#6d28d9'}}).jpeg().toBuffer()
   const imageB=await sharp({create:{width:640,height:640,channels:3,background:'#be123c'}}).jpeg().toBuffer()
-  await sendCarousel(ctx.sock,ctx.chat,{body:'Prueba de carrusel nativo de Ultra Baileys',footer:'Nero Bot',debugLabel:'TESTCARDS',banner:await fs.readFile(path.resolve('assets','tiktok-banner.jpg')),bannerTitle:'Nero Carousel Test',cards:[
-    {image:imageA,title:'Tarjeta 1',body:'Carrusel nativo sin depender de cards directas.',footer:'Nero Bot',buttons:[copyButton('Copy','.menu')]},
-    {image:imageB,title:'Tarjeta 2',body:'Desliza horizontalmente para verla.',footer:'Nero Bot',buttons:[copyButton('Copy','.ping')]}
-  ]},ctx.msg)
+  await ctx.sock.sendMessage(ctx.chat,{
+    title:'NERO CAROUSEL TEST',
+    text:'Prueba del soporte cards portado a Ultra Baileys.',
+    footer:'Nero Bot • ArcadiaCorps',
+    messageVersion:1,
+    cards:[
+      {image:imageA,title:'Tarjeta 1',body:'Carrusel generado con sock.sendMessage({ cards }).',footer:'Nero Bot',buttons:[copyButton('Copy','.menu')]},
+      {image:imageB,title:'Tarjeta 2',body:'Desliza horizontalmente para verla.',footer:'Nero Bot',buttons:[copyButton('Copy','.ping')]}
+    ]
+  },{quoted:ctx.msg})
 })}}
 export const testcardsbtn={name:'testcardsbtn',aliases:[],async execute(ctx){return testcards.execute(ctx)}}
+
 
 
 export const terabox={name:'terabox',aliases:['tb'],async execute(ctx){return apiTask(ctx,async()=>{const url=ctx.args[0];if(!isLikelyUrl(url))throw new Error(usage('terabox','<enlace>'));const d=await apiGet('/terabox',{url,limit:50});const files=d.files||[];if(!files.length)throw new Error('No encontré archivos en TeraBox.');const token=saveSelection('terabox',files);const rows=files.slice(0,10).map((f,i)=>({header:'Archivo',title:f.file_name.slice(0,90),description:formatBytes(f.size_bytes),id:`${config.prefix}teraboxpick ${token} ${i}`}));await sendInteractive(ctx.sock,ctx.chat,{title:'TeraBox Downloader',body:`Se encontraron ${files.length} archivo(s).`,media:files[0].thumb?{image:{url:files[0].thumb}}:null,buttons:[singleSelect('Seleccionar',[{title:'Archivos',rows}])]},ctx.msg)})}}

@@ -242,3 +242,9 @@ Esta versión restaura exactamente el flujo de conexión por código de la v1.5.
 - Restaurado RussellXZ Ultra Baileys.
 - Recuperada la conexión por código original sin fijar versión WA Web.
 - Conservadas las funciones actuales, IA, cola y comandos.
+## v1.6.6
+- Portado a RussellXZ Ultra Baileys únicamente el soporte `sock.sendMessage({ cards })` del generador de mensajes de fsociety-Baileys.
+- Ultra continúa administrando la conexión y la vinculación por código; no se instala ni se importa DevYer.
+- `.tiktoksearch`, `.testcards` y `.testcardsbtn` usan ahora el flujo directo `cards`.
+- El parche se reaplica automáticamente después de cada `npm install` mediante `postinstall`.
+- Nuevos comandos Owner: `.restart`, `.ownerinfo`, `.join`, `.leave`, `.block`, `.unblock`, `.setnamebot`, `.setppbot`, `.broadcast`, `.exec` y `.eval`.
