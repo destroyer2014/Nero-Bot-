@@ -1,7 +1,7 @@
 {
   "name": "nero-bot",
-  "version": "1.5.9",
-  "description": "Nero Bot v1.5.9: prueba de vinculación por código con ItsLia Baileys, sin modificar comandos ni funciones",
+  "version": "1.6.0",
+  "description": "Nero Bot v1.6.0: Ultra Baileys con vinculación exclusiva por QR, sin modificar comandos ni funciones",
   "type": "module",
   "main": "src/index.js",
   "scripts": {
@@ -17,6 +17,7 @@
     "dotenv": "^16.6.1",
     "sharp": "^0.34.3",
     "node-webpmux": "^3.2.1",
-    "@whiskeysockets/baileys": "npm:@itsliaaa/baileys@0.3.0-rc.9"
+    "@whiskeysockets/baileys": "github:russellxz/ultra-baileys#master",
+    "qrcode-terminal": "^0.12.0"
   }
 }
