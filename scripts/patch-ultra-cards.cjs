@@ -22,7 +22,7 @@ const patch = `${START}
             const buttons = Array.isArray(slide?.buttons) ? slide.buttons : [];
             let headerMedia = {};
             if (slide?.product) {
-                const { imageMessage } = await (0, exports.prepareWAMessageMedia)({ image: slide.product.productImage }, options);
+                const { imageMessage } = await prepareWAMessageMedia({ image: slide.product.productImage }, options);
                 headerMedia = {
                     productMessage: {
                         product: {
@@ -33,10 +33,10 @@ const patch = `${START}
                 };
             }
             else if (slide?.image) {
-                headerMedia = await (0, exports.prepareWAMessageMedia)({ image: slide.image }, options);
+                headerMedia = await prepareWAMessageMedia({ image: slide.image }, options);
             }
             else if (slide?.video) {
-                headerMedia = await (0, exports.prepareWAMessageMedia)({ video: slide.video }, options);
+                headerMedia = await prepareWAMessageMedia({ video: slide.video }, options);
             }
             return {
                 header: {
@@ -104,8 +104,9 @@ if (source.includes(START) && source.includes(END)) {
 }
 
 const markers = [
-  "    if ('shop' in message && !!message.shop) {",
-  "    if ('viewOnce' in message && !!message.viewOnce) {"
+  "    else if (hasNonNullishProperty(message, 'buttons') || hasNonNullishProperty(message, 'nativeFlow')) {",
+  "    else if (hasNonNullishProperty(message, 'sections')) {",
+  "    else {\n        m = await prepareWAMessageMedia(message, options);\n    }"
 ]
 const marker = markers.find((candidate) => source.includes(candidate))
 if (!marker) {
