@@ -2,9 +2,11 @@ import { downloadMediaMessage } from '@itsliaaa/baileys'
 import config from '../../config.js'
 import { evoGet, requireEvoGbApiKey } from '../lib/api.js'
 import { unwrapMessage } from '../lib/text.js'
+import { enqueueEdit, getEditQueueStatus, cancelEdit, formatLeft } from '../lib/editImageQueue.js'
 
 const NERO_PROMPT = 'Eres la IA de Nero Bot creada por ArcadiaCorps. Tu creador y dueño es Zemo. Responde en español, alegre, divertida, útil y ligeramente sarcástica. No inventes datos.'
 const GEMINI_PROMPT = 'Eres la IA femenina oficial de ArcadiaCorps, empresa de software y programación. Tu creador es Zemo. Responde en español, alegre, divertida, útil y ligeramente sarcástica.'
+const AI_CREDIT = '> Nero AI - IA de ArcadiaCorps'
 const q = ctx => ctx.args.join(' ').trim()
 const wrap=(name,aliases,fn)=>({name,aliases,async execute(ctx){try{await ctx.sock.sendMessage(ctx.chat,{react:{text:'⏳',key:ctx.msg.key}});await fn(ctx);await ctx.sock.sendMessage(ctx.chat,{react:{text:'✅',key:ctx.msg.key}})}catch(e){await ctx.sock.sendMessage(ctx.chat,{react:{text:'❌',key:ctx.msg.key}}).catch(()=>{});await ctx.sock.sendMessage(ctx.chat,{text:`❌ ${e.message}`},{quoted:ctx.msg})}}})
 function quotedContext(msg){const m=unwrapMessage(msg.message||{});return m.extendedTextMessage?.contextInfo||m.imageMessage?.contextInfo||m.videoMessage?.contextInfo||m.documentMessage?.contextInfo}
@@ -55,7 +57,7 @@ async function traducirAlEspanol(texto) {
   }
 }
 function splitText(text,max=3500){const chunks=[];let rest=String(text||'');while(rest.length>max){let cut=rest.lastIndexOf('\n',max);if(cut<max*0.5)cut=max;chunks.push(rest.slice(0,cut));rest=rest.slice(cut).trimStart()}if(rest)chunks.push(rest);return chunks}
-async function sendAi(ctx,title,result){for(const [i,part] of splitText(result).entries())await ctx.sock.sendMessage(ctx.chat,{text:`${i===0?`🤖 *${title}*\n\n`:''}${part}`},{quoted:i===0?ctx.msg:undefined})}
+async function sendAi(ctx,title,result){for(const [i,part] of splitText(result).entries())await ctx.sock.sendMessage(ctx.chat,{text:`${i===0?`🤖 *${title}*\n\n`:''}${part}${i===splitText(result).length-1?`\n\n${AI_CREDIT}`:''}`},{quoted:i===0?ctx.msg:undefined})}
 export const ia=wrap('ia',['chatgpt','gpt','ask'],async ctx=>{const text=q(ctx);if(!text)throw new Error(`Uso: ${config.prefix}ia <pregunta>`);const d=await evoGet('/ai/gptprompt',{text,prompt:NERO_PROMPT});await sendAi(ctx,'Nero IA',d.result)})
 export const gemini=wrap('gemini',['gem'],async ctx=>{const text=q(ctx);if(!text)throw new Error(`Uso: ${config.prefix}gemini <pregunta>`);const d=await evoGet('/ai/gemini',{text,prompt:GEMINI_PROMPT});await sendAi(ctx,'Gemini',d.result)})
 export const claude=wrap('claude',['devai'],async ctx=>{const text=q(ctx);if(!text)throw new Error(`Uso: ${config.prefix}claude <pregunta>`);const d=await evoGet('/ai/claude',{text});await sendAi(ctx,'Claude',d.result)})
@@ -70,7 +72,7 @@ export const imgprompt = wrap('imgprompt', ['describeimg'], async ctx => {
   const promptEs = await traducirAlEspanol(original)
 
   await ctx.sock.sendMessage(ctx.chat, {
-    text: `🖼️ *Prompt de imagen*\n\n${promptEs}`
+    text: `🖼️ *Prompt de imagen*\n\n${promptEs}\n\n${AI_CREDIT}`
   }, { quoted: ctx.msg })
 })
 export const editimg = wrap('editimg', ['nanobanana', 'nano', 'editar'], async ctx => {
@@ -80,24 +82,55 @@ export const editimg = wrap('editimg', ['nanobanana', 'nano', 'editar'], async c
   const b = await quotedBuffer(ctx)
   if (!b) throw new Error(`Responde a una imagen con ${config.prefix}editimg <instrucción>`)
 
-  const d = await multipart('/ai/nanobanana', b, {
-    method: 'local',
-    prompt
+  const { promise, position } = enqueueEdit({
+    userId: ctx.sender,
+    onStart: async () => {
+      await ctx.sock.sendMessage(ctx.chat, {
+        text: `🎨 *Procesando tu imagen con IA…*\n\n${AI_CREDIT}`
+      }, { quoted: ctx.msg })
+    },
+    run: async () => {
+      const d = await multipart('/ai/nanobanana', b, { method: 'local', prompt })
+      if (d.binary) {
+        return ctx.sock.sendMessage(ctx.chat, {
+          image: d.binary,
+          caption: `✨ *Imagen editada con IA*\n${AI_CREDIT}`
+        }, { quoted: ctx.msg })
+      }
+      const url = d.result || d.url || d.image || d.data?.url || d.data?.result || d.data?.image
+      if (!url) throw new Error('NanoBanana no entregó una imagen válida.')
+      return ctx.sock.sendMessage(ctx.chat, {
+        image: { url },
+        caption: `✨ *Imagen editada con IA*\n${AI_CREDIT}`
+      }, { quoted: ctx.msg })
+    }
   })
 
-  if (d.binary) {
-    return ctx.sock.sendMessage(ctx.chat, {
-      image: d.binary,
-      caption: `✨ *Imagen editada con IA*\n> ✐ ${prompt}`
+  await ctx.sock.sendMessage(ctx.chat, {
+    text: `⏳ *Imagen añadida a la cola*\nPosición aproximada: ${position}\n\n${AI_CREDIT}`
+  }, { quoted: ctx.msg })
+  await promise
+})
+
+export const editqueue = {
+  name: 'editqueue', aliases: ['colaedit'],
+  async execute(ctx) {
+    const status = getEditQueueStatus(ctx.sender)
+    const cooldown = status.cooldownMs > 0 ? `\nCooldown: ${formatLeft(status.cooldownMs)}` : ''
+    await ctx.sock.sendMessage(ctx.chat, {
+      text: `🎨 *Cola de edición IA*\nProcesando: ${status.processing ? 'Sí' : 'No'}\nEn espera: ${status.waiting}\nTu posición: ${status.position || 'No estás en cola'}${cooldown}\n\n${AI_CREDIT}`
     }, { quoted: ctx.msg })
   }
+}
 
-  const url = d.result || d.url || d.image || d.data?.url || d.data?.result || d.data?.image
-  if (!url) throw new Error('NanoBanana no entregó una imagen válida.')
+export const cancelaredit = {
+  name: 'cancelaredit', aliases: ['canceledit'],
+  async execute(ctx) {
+    const ok = cancelEdit(ctx.sender)
+    await ctx.sock.sendMessage(ctx.chat, {
+      text: ok ? `✅ Solicitud retirada de la cola.\n\n${AI_CREDIT}` : `❌ No tienes una edición pendiente que pueda cancelarse.\n\n${AI_CREDIT}`
+    }, { quoted: ctx.msg })
+  }
+}
 
-  await ctx.sock.sendMessage(ctx.chat, {
-    image: { url },
-    caption: `✨ *Imagen editada con IA*\n> ✐ ${prompt}`
-  }, { quoted: ctx.msg })
-})
-export const aiCommands=[ia,gemini,claude,qwen,bot,imgprompt,editimg]
+export const aiCommands=[ia,gemini,claude,qwen,bot,imgprompt,editimg,editqueue,cancelaredit]

@@ -1,12 +1,13 @@
 {
   "name": "nero-bot",
-  "version": "1.5.3",
-  "description": "Nero Bot v1.5.3: NanoBanana local automático y prompts de imagen en español",
+  "version": "1.5.4",
+  "description": "Nero Bot v1.5.4: carrusel TikTok reparado, cola IA y créditos ArcadiaCorps",
   "type": "module",
   "main": "src/index.js",
   "scripts": {
     "start": "node src/index.js",
-    "dev": "node --watch src/index.js"
+    "dev": "node --watch src/index.js",
+    "postinstall": "node scripts/patch-fsociety-cards.cjs"
   },
   "engines": {
     "node": ">=20"
