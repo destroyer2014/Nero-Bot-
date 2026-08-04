@@ -49,14 +49,21 @@ async function fetchGifUrl(api) {
       const json = await res.json()
       const url = json?.results?.[0]?.url
       if (url) return url
+      console.error('[REACCIONES] nekos.best sin resultados para', api, json)
+    } else {
+      console.error('[REACCIONES] nekos.best respondió', res.status, 'para', api)
     }
-  } catch {}
+  } catch (error) {
+    console.error('[REACCIONES] Error consultando nekos.best:', api, error?.message || error)
+  }
   // fallback genérico si el endpoint específico falla
   try {
     const res = await fetch('https://nekos.best/api/v2/pat', { headers: { 'user-agent': `${config.botName}/${config.version}` } })
     const json = await res.json()
     return json?.results?.[0]?.url || null
-  } catch {}
+  } catch (error) {
+    console.error('[REACCIONES] Error en fallback de nekos.best:', error?.message || error)
+  }
   return null
 }
 
@@ -68,7 +75,7 @@ async function gifToMp4Buffer(gifUrl) {
   let inPath = null
   try {
     const res = await fetch(gifUrl, { headers: { 'user-agent': `${config.botName}/${config.version}` } })
-    if (!res.ok) return null
+    if (!res.ok) { console.error('[REACCIONES] No se pudo descargar el gif, HTTP', res.status, gifUrl); return null }
     const contentType = res.headers.get('content-type') || ''
     const buf = Buffer.from(await res.arrayBuffer())
 
@@ -82,10 +89,20 @@ async function gifToMp4Buffer(gifUrl) {
     inPath = join(tmp, `nero_reac_${ts}.${ext}`)
     await writeFile(inPath, buf)
 
-    await execAsync(`ffmpeg -i "${inPath}" -movflags faststart -pix_fmt yuv420p -vf "scale=trunc(iw/2)*2:trunc(ih/2)*2" "${mp4Path}" -y`)
+    // -an quita audio (WhatsApp a veces se queda "cargando" para siempre
+    // con mp4 que traen pistas de audio vacías/corruptas), perfil baseline
+    // + level 3.0 es lo más compatible con el reproductor de WhatsApp.
+    const cmd = `ffmpeg -i "${inPath}" -an -movflags faststart -pix_fmt yuv420p -profile:v baseline -level 3.0 -vf "scale=trunc(iw/2)*2:trunc(ih/2)*2" "${mp4Path}" -y`
+    try {
+      await execAsync(cmd)
+    } catch (ffmpegError) {
+      console.error('[REACCIONES] ffmpeg falló (¿está instalado y en el PATH del proceso PM2?):', ffmpegError?.stderr || ffmpegError?.message || ffmpegError)
+      return null
+    }
     const mp4Buf = await readFile(mp4Path)
     return mp4Buf
-  } catch {
+  } catch (error) {
+    console.error('[REACCIONES] Error convirtiendo gif a mp4:', error?.message || error)
     return null
   } finally {
     if (inPath) unlink(inPath).catch(() => {})
@@ -128,7 +145,9 @@ function makeReaction(def) {
             return
           }
         }
-      } catch {}
+      } catch (error) {
+        console.error('[REACCIONES] Falló el envío del gif, usando fallback de texto:', def.name, error?.message || error)
+      }
 
       // Fallback a texto si la API o ffmpeg fallan
       await ctx.sock.sendMessage(ctx.chat, { text: caption, mentions }, { quoted: ctx.msg })

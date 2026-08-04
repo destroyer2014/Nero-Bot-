@@ -15,23 +15,29 @@ export async function createSubbotForPhone(ctx, rawPhone){
  await ctx.sock.sendMessage(ctx.chat,{text:`⏳ *NERO está preparando el código para +${phone}.*\nPuede tardar unos segundos. Recibirás el código en este mismo chat.`},{quoted:ctx.msg})
 }
 export const codeCommand={name:'code',aliases:['jadibot'],async execute(ctx){
- // Si el usuario pasó el número manualmente (.code 51987654321), lo respetamos.
- if(ctx.args[0]){ await createSubbotForPhone(ctx,ctx.args[0]); return }
+ try{
+  // Si el usuario pasó el número manualmente (.code 51987654321), lo respetamos.
+  if(ctx.args[0]){ await createSubbotForPhone(ctx,ctx.args[0]); return }
 
- const detected=num(ctx.sender)
- const lidDigits=String(ctx.sender||'').split('@')[0].split(':')[0]
- // Solo lo damos por válido si: no es un @lid sin resolver, tiene un
- // largo de teléfono real, y no coincide con el propio LID (el bug que
- // generaba códigos para números que no existen).
- const detectedOk=!String(ctx.sender).endsWith('@lid')&&detected.length>=8&&detected.length<=15&&detected!==lidDigits
+  const detected=num(ctx.sender)
+  const lidDigits=String(ctx.sender||'').split('@')[0].split(':')[0]
+  // Solo lo damos por válido si: no es un @lid sin resolver, tiene un
+  // largo de teléfono real, y no coincide con el propio LID (el bug que
+  // generaba códigos para números que no existen).
+  const detectedOk=!String(ctx.sender).endsWith('@lid')&&detected.length>=8&&detected.length<=15&&detected!==lidDigits
 
- if(!detectedOk){
-  const wait=canRequestCode(ctx.sender); if(wait>0) throw new Error(`Debes esperar ${Math.ceil(wait/1000)} segundos para volver a intentarlo.`)
-  setPendingSubbotPhone(ctx.chat,ctx.sender)
-  await ctx.sock.sendMessage(ctx.chat,{text:'📱 *No pude detectar tu número automáticamente.*\nEscribe ahora tu número real con código de país y solo dígitos.\n\nEjemplo: *51912345678*\nTienes 2 minutos para responder.'},{quoted:ctx.msg})
-  return
+  if(!detectedOk){
+   const wait=canRequestCode(ctx.sender)
+   if(wait>0){ await ctx.sock.sendMessage(ctx.chat,{text:`⏳ Debes esperar ${Math.ceil(wait/1000)} segundos para volver a intentarlo.`},{quoted:ctx.msg}); return }
+   setPendingSubbotPhone(ctx.chat,ctx.sender)
+   await ctx.sock.sendMessage(ctx.chat,{text:'📱 *No pude detectar tu número automáticamente.*\nEscribe ahora tu número real con código de país y solo dígitos.\n\nEjemplo: *51912345678*\nTienes 2 minutos para responder.'},{quoted:ctx.msg})
+   return
+  }
+  await createSubbotForPhone(ctx,detected)
+ }catch(error){
+  console.error('[SUBBOT .code]',error)
+  await ctx.sock.sendMessage(ctx.chat,{text:`❌ ${error?.message||'No se pudo generar el código.'}`},{quoted:ctx.msg}).catch(()=>{})
  }
- await createSubbotForPhone(ctx,detected)
 }}
 export const botsCommand={name:'bots',aliases:['subbots'],async execute(ctx){const bots=listSubbots();const online=bots.filter(b=>b.status==='connected');const lines=[`🤖 *Subbots de Nero*`,`Conectados: ${online.length}`,`Registrados: ${bots.length}`,''];for(const [i,b] of bots.entries())lines.push(`${i+1}. +${b.phone} | ${b.status||'desconocido'} | ${fmt(Date.now()-(b.connectedAt||b.startedAt||Date.now()))} | ${b.platform||'Desconocido'}`);await ctx.sock.sendMessage(ctx.chat,{text:lines.join('\n')},{quoted:ctx.msg})}}
 export const setPrincipalCommand={name:'setprincipal',aliases:['setbot'],async execute(ctx){if(!ctx.chat.endsWith('@g.us'))throw new Error('Este comando solo funciona en grupos.');const bots=listSubbots().filter(b=>b.status==='connected');const all=[{id:'principal',phone:'Nero principal',status:'connected'},...bots];const rows=all.map(b=>({title:b.id==='principal'?'Nero principal':`+${b.phone}`,description:`${b.id==='principal'?'Bot principal':'Subbot'} • ${b.status}`,id:`${config.prefix}principalpick ${b.id}`}));await sendInteractive(ctx.sock,ctx.chat,{title:'Elegir bot principal',body:'Selecciona qué instancia responderá en este grupo.',buttons:[singleSelect('Seleccionar instancia',[{title:'Instancias disponibles',rows}])] },ctx.msg)}}

@@ -101,18 +101,40 @@ function resolveSenderJid(msg) {
   return jidNormalizedUser(candidates.find(isPhoneJid) || candidates.find(Boolean) || '')
 }
 
+function staticLidOverride(lid) {
+  const digits = String(lid).split('@')[0].split(':')[0]
+  const lids = config.ownerLids || []
+  const idx = lids.indexOf(digits)
+  if (idx === -1) return null
+  const phone = config.ownerNumbers?.[idx]
+  return phone ? `${phone}@s.whatsapp.net` : null
+}
+
 async function resolveSenderIdentity(sock, msg, chat) {
   const initial = resolveSenderJid(msg)
   if (!initial.endsWith('@lid')) return initial
 
   const lidDigits = initial.split('@')[0].split(':')[0]
 
+  // 0) Override estático: LIDs ya conocidos y registrados a mano en
+  // config.js (config.ownerLids <-> config.ownerNumbers). Es el caso
+  // más común durante pruebas y no depende de que WhatsApp ya haya
+  // entregado el mapeo interno.
+  const staticPhone = staticLidOverride(initial)
+  if (staticPhone) {
+    console.log('[JID] LID resuelto por override estático:', { lid: initial, phoneJid: staticPhone })
+    return jidNormalizedUser(staticPhone)
+  }
+
   // 1) Vía oficial de Baileys: el mapeo interno LID -> número real
   // (lidMapping). Es la fuente confiable; a diferencia de adivinar por
   // groupMetadata, no depende de que WhatsApp haya poblado bien el
   // campo phoneNumber del participante (que a veces refleja el propio
   // LID en vez del número real y generaba códigos de vinculación para
-  // números que no existen).
+  // números que no existen). OJO: solo funciona si WhatsApp ya envió
+  // ese mapeo a esta sesión (suele pasar tras haber recibido/decodificado
+  // al menos un mensaje de ese contacto); si es la primera vez que este
+  // LID le escribe al bot, puede devolver null y caemos al fallback.
   try {
     const resolved = await sock.signalRepository?.lidMapping?.getPNForLID(initial)
     if (resolved) {
