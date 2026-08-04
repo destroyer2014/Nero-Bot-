@@ -15,11 +15,20 @@ export async function createSubbotForPhone(ctx, rawPhone){
  await ctx.sock.sendMessage(ctx.chat,{text:`⏳ *NERO está preparando el código para +${phone}.*\nPuede tardar unos segundos. Recibirás el código en este mismo chat.`},{quoted:ctx.msg})
 }
 export const codeCommand={name:'code',aliases:['jadibot'],async execute(ctx){
+ // Si el usuario pasó el número manualmente (.code 51987654321), lo respetamos.
+ if(ctx.args[0]){ await createSubbotForPhone(ctx,ctx.args[0]); return }
+
  const detected=num(ctx.sender)
- if(String(ctx.sender).endsWith('@lid')||detected.length<8||detected.length>15){
+ const lidDigits=String(ctx.sender||'').split('@')[0].split(':')[0]
+ // Solo lo damos por válido si: no es un @lid sin resolver, tiene un
+ // largo de teléfono real, y no coincide con el propio LID (el bug que
+ // generaba códigos para números que no existen).
+ const detectedOk=!String(ctx.sender).endsWith('@lid')&&detected.length>=8&&detected.length<=15&&detected!==lidDigits
+
+ if(!detectedOk){
   const wait=canRequestCode(ctx.sender); if(wait>0) throw new Error(`Debes esperar ${Math.ceil(wait/1000)} segundos para volver a intentarlo.`)
   setPendingSubbotPhone(ctx.chat,ctx.sender)
-  await ctx.sock.sendMessage(ctx.chat,{text:'📱 *Escribe ahora tu número real con código de país y solo dígitos.*\n\nEjemplo: *51912345678*\nTienes 2 minutos para responder.'},{quoted:ctx.msg})
+  await ctx.sock.sendMessage(ctx.chat,{text:'📱 *No pude detectar tu número automáticamente.*\nEscribe ahora tu número real con código de país y solo dígitos.\n\nEjemplo: *51912345678*\nTienes 2 minutos para responder.'},{quoted:ctx.msg})
   return
  }
  await createSubbotForPhone(ctx,detected)

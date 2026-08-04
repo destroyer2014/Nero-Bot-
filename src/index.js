@@ -103,40 +103,72 @@ function resolveSenderJid(msg) {
 
 async function resolveSenderIdentity(sock, msg, chat) {
   const initial = resolveSenderJid(msg)
-  if (!initial.endsWith('@lid') || !isGroupJid(chat)) return initial
+  if (!initial.endsWith('@lid')) return initial
 
+  const lidDigits = initial.split('@')[0].split(':')[0]
+
+  // 1) Vía oficial de Baileys: el mapeo interno LID -> número real
+  // (lidMapping). Es la fuente confiable; a diferencia de adivinar por
+  // groupMetadata, no depende de que WhatsApp haya poblado bien el
+  // campo phoneNumber del participante (que a veces refleja el propio
+  // LID en vez del número real y generaba códigos de vinculación para
+  // números que no existen).
   try {
-    const metadata = await sock.groupMetadata(chat)
-    const participants = metadata?.participants || []
-    const raw = initial.split('@')[0].split(':')[0]
-    const match = participants.find(participant => {
-      const values = [participant?.id, participant?.lid, participant?.phoneNumber, participant?.jid]
-        .filter(Boolean)
-        .map(value => String(value))
-      return values.some(value => value === initial || value.split('@')[0].split(':')[0] === raw)
-    })
-
-    const candidates = [
-      match?.phoneNumber,
-      match?.jid,
-      match?.id,
-      msg?.key?.participantAlt,
-      msg?.key?.remoteJidAlt
-    ].filter(Boolean)
-
-    const phoneJid = candidates.find(isPhoneJid)
-    if (phoneJid) {
-      const resolved = jidNormalizedUser(phoneJid)
-      console.log('[JID] LID resuelto por metadata:', { lid: initial, phoneJid: resolved })
-      return resolved
+    const resolved = await sock.signalRepository?.lidMapping?.getPNForLID(initial)
+    if (resolved) {
+      const phoneJid = resolved.includes('@') ? resolved : `${resolved}@s.whatsapp.net`
+      const digits = phoneJid.split('@')[0].split(':')[0]
+      if (isPhoneJid(phoneJid) && digits !== lidDigits) {
+        const normalized = jidNormalizedUser(phoneJid)
+        console.log('[JID] LID resuelto por lidMapping:', { lid: initial, phoneJid: normalized })
+        return normalized
+      }
     }
-
-    console.log('[JID] No se pudo resolver LID por metadata:', {
-      lid: initial,
-      participant: match || null
-    })
   } catch (error) {
-    console.warn('[JID] Error resolviendo LID:', error?.message || error)
+    console.warn('[JID] lidMapping no disponible:', error?.message || error)
+  }
+
+  // 2) Fallback: metadata del grupo, solo si el mapeo oficial no respondió.
+  if (isGroupJid(chat)) {
+    try {
+      const metadata = await sock.groupMetadata(chat)
+      const participants = metadata?.participants || []
+      const match = participants.find(participant => {
+        const values = [participant?.id, participant?.lid, participant?.phoneNumber, participant?.jid]
+          .filter(Boolean)
+          .map(value => String(value))
+        return values.some(value => value === initial || value.split('@')[0].split(':')[0] === lidDigits)
+      })
+
+      const candidates = [
+        match?.phoneNumber,
+        match?.jid,
+        match?.id,
+        msg?.key?.participantAlt,
+        msg?.key?.remoteJidAlt
+      ].filter(Boolean)
+
+      // Descartamos cualquier candidato cuyos dígitos coincidan con el
+      // LID: es el bug conocido de WhatsApp/Baileys que hace que el
+      // "phoneNumber" del participante sea en realidad su propio LID.
+      const phoneJid = candidates.find(value => {
+        if (!isPhoneJid(value)) return false
+        return String(value).split('@')[0].split(':')[0] !== lidDigits
+      })
+
+      if (phoneJid) {
+        const resolved = jidNormalizedUser(phoneJid)
+        console.log('[JID] LID resuelto por metadata:', { lid: initial, phoneJid: resolved })
+        return resolved
+      }
+
+      console.log('[JID] No se pudo resolver LID de forma confiable:', {
+        lid: initial,
+        participant: match || null
+      })
+    } catch (error) {
+      console.warn('[JID] Error resolviendo LID por metadata:', error?.message || error)
+    }
   }
 
   return initial

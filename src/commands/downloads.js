@@ -372,27 +372,34 @@ export const tiktokSearch={name:'tiktoksearch',aliases:['ttsearch','tts','tiktok
   const input=queryText(ctx.args)
   if(!input)throw new Error(usage('tts','<búsqueda>'))
   const response=await evoGet('/search/tiktok',{query:input})
-  const list=(response.data||[]).slice(0,10)
+  const list=(response.data||[]).slice(0,8)
   if(!list.length)throw new Error('No encontré resultados en TikTok.')
-  const token=saveSelection('tiktok-search',list)
-  const rows=list.map((item,index)=>{
-    const username=item.author?.unique_id||'usuario'
+
+  const cards=list.map(item=>{
+    const username=item.author?.unique_id||item.author?.nickname||'usuario'
     const stats=item.stats||{}
+    const webUrl=item.id?`https://www.tiktok.com/@${username}/video/${item.id}`:(item.play||item.url||'')
+    if(!webUrl)return null
+    const portada=item.cover||item.thumbnail||item.thumb||item.origin_cover||null
     return {
-      header:`Resultado ${index+1}`,
-      title:(item.title||'Sin título').slice(0,80),
-      description:`@${username} • ${item.duration||'--'}s • ${stats.views||0} vistas`.slice(0,100),
-      id:`${config.prefix}ttget ${token} ${index}`
+      img:portada,
+      titulo:`👤 @${username}`,
+      body:[`${(item.title||'Sin título').slice(0,90)}`,`⏱️ ${item.duration||'--'}s  ▶️ ${stats.plays||stats.views||0}  ❤️ ${stats.likes||0}  💬 ${stats.comments||0}`].join('\n'),
+      footer:'Nero Bot • ArcadiaCorps',
+      botones:[{tipo:'copy',texto:'📋 Copiar comando',payload:`${config.prefix}tiktok ${webUrl}`}]
     }
-  })
-  const first=list[0]
-  await sendInteractive(ctx.sock,ctx.chat,{
-    title:'TikTok Buscador',
-    body:`Resultados para: *${input}*\nSelecciona un video de la lista para descargarlo.`,
-    footer:'Nero Bot • ArcadiaCorps',
-    media:first?.cover?{image:{url:first.cover}}:null,
-    buttons:[singleSelect('Ver resultados',[{title:'Resultados de TikTok',rows}])]
-  },ctx.msg)
+  }).filter(Boolean)
+
+  if(!cards.length)throw new Error('No encontré videos con link válido.')
+
+  await enviarCarrusel(
+    ctx.sock,
+    ctx.chat,
+    `🔍 *TikTok — ${input}*`,
+    '💡 Toca "Copiar comando", pega y envía para descargar el video.',
+    cards,
+    { quoted: ctx.msg }
+  )
 })}}
 
 export const tiktokGet={name:'ttget',aliases:['tiktokget','ttselect'],async execute(ctx){return apiTask(ctx,async()=>{
