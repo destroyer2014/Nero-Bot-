@@ -144,6 +144,18 @@ function makeReaction(def) {
             await ctx.sock.sendMessage(ctx.chat, { video: mp4Buffer, gifPlayback: true, mimetype: 'video/mp4', caption, mentions }, { quoted: ctx.msg })
             return
           }
+          // ffmpeg falló o no está disponible: intentamos mandar el gif/webp
+          // original tal cual, mejor que quedarnos solo con el texto.
+          try {
+            const res = await fetch(gifUrl, { headers: { 'user-agent': `${config.botName}/${config.version}` } })
+            if (res.ok) {
+              const raw = Buffer.from(await res.arrayBuffer())
+              await ctx.sock.sendMessage(ctx.chat, { image: raw, caption, mentions }, { quoted: ctx.msg })
+              return
+            }
+          } catch (rawError) {
+            console.error('[REACCIONES] Falló también el envío del gif crudo:', def.name, rawError?.message || rawError)
+          }
         }
       } catch (error) {
         console.error('[REACCIONES] Falló el envío del gif, usando fallback de texto:', def.name, error?.message || error)

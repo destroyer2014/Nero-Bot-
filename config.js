@@ -14,6 +14,12 @@ export default {
   // JID LID observado para el owner. Puede ampliarse con OWNER_LIDS en .env.
   ownerLids: ['50148205949148'],
   subOwnerNumbers: ['51921909260'],
+  // JID LID conocido para subowners, mismo mecanismo que ownerLids.
+  // Se puede ampliar con SUBOWNER_LIDS en .env (separados por coma).
+  // Si no sabes el LID de un subowner, déjalo así: en cuanto el bot logre
+  // resolver su número una sola vez (por lidMapping o metadata de grupo),
+  // queda cacheado en sessions/lid-cache.json y ya no hace falta el override.
+  subOwnerLids: [],
 
   menuVideo: './assets/nero-menu.mp4',
   apiBaseUrl: process.env.DVYER_API_BASE_URL || 'https://dv-yer-api.online',

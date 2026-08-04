@@ -13,15 +13,24 @@ function configuredOwnerLids() {
   return normalizeNumbers([...(config.ownerLids || []), ...envLids])
 }
 
+function configuredSubOwnerLids() {
+  const envLids = String(process.env.SUBOWNER_LIDS || '')
+    .split(',')
+    .map(value => value.trim())
+    .filter(Boolean)
+  return normalizeNumbers([...(config.subOwnerLids || []), ...envLids])
+}
+
 export function getPermissionLevel(jid = '') {
   const number = jidToNumber(jid)
   const owners = normalizeNumbers(config.ownerNumbers)
   const ownerLids = configuredOwnerLids()
   const subOwners = normalizeNumbers(config.subOwnerNumbers)
+  const subOwnerLids = configuredSubOwnerLids()
   const isLid = String(jid).endsWith('@lid')
 
   if (owners.includes(number) || (isLid && ownerLids.includes(number))) return 'owner'
-  if (subOwners.includes(number)) return 'subowner'
+  if (subOwners.includes(number) || (isLid && subOwnerLids.includes(number))) return 'subowner'
   return 'user'
 }
 

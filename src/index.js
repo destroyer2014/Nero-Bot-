@@ -24,6 +24,7 @@ import { sendInteractive, copyButton } from './lib/interactive.js'
 import { getInstanceMode, privateCommandsAllowed } from './lib/modeStore.js'
 import { hasPendingSubbotPhone, clearPendingSubbotPhone } from './lib/pendingSubbotPhone.js'
 import { createSubbotForPhone } from './commands/subbots.js'
+import { getCachedPhoneForLid, setCachedPhoneForLid } from './lib/lidCache.js'
 
 const logger = pino({ level: process.env.BAILEYS_LOG_LEVEL || 'silent' })
 const sessionPath = path.resolve('sessions', config.sessionName)
@@ -126,6 +127,15 @@ async function resolveSenderIdentity(sock, msg, chat) {
     return jidNormalizedUser(staticPhone)
   }
 
+  // 0.5) Caché persistente: si este LID ya se resolvió con éxito antes
+  // (en cualquier sesión anterior), lo recordamos y evitamos volver a
+  // depender de que WhatsApp entregue el mapeo de nuevo.
+  const cachedPhone = getCachedPhoneForLid(lidDigits)
+  if (cachedPhone) {
+    console.log('[JID] LID resuelto por caché:', { lid: initial, phone: cachedPhone })
+    return jidNormalizedUser(`${cachedPhone}@s.whatsapp.net`)
+  }
+
   // 1) Vía oficial de Baileys: el mapeo interno LID -> número real
   // (lidMapping). Es la fuente confiable; a diferencia de adivinar por
   // groupMetadata, no depende de que WhatsApp haya poblado bien el
@@ -143,6 +153,7 @@ async function resolveSenderIdentity(sock, msg, chat) {
       if (isPhoneJid(phoneJid) && digits !== lidDigits) {
         const normalized = jidNormalizedUser(phoneJid)
         console.log('[JID] LID resuelto por lidMapping:', { lid: initial, phoneJid: normalized })
+        setCachedPhoneForLid(lidDigits, digits)
         return normalized
       }
     }
@@ -181,6 +192,7 @@ async function resolveSenderIdentity(sock, msg, chat) {
       if (phoneJid) {
         const resolved = jidNormalizedUser(phoneJid)
         console.log('[JID] LID resuelto por metadata:', { lid: initial, phoneJid: resolved })
+        setCachedPhoneForLid(lidDigits, String(phoneJid).split('@')[0].split(':')[0])
         return resolved
       }
 
@@ -367,7 +379,11 @@ async function startNeroBot() {
 
         if (hasPendingSubbotPhone(chat, sender) && /^\+?\d[\d\s-]{7,18}$/.test(text.trim())) {
           clearPendingSubbotPhone(chat, sender)
-          await createSubbotForPhone({ sock, msg, chat, sender, args: [], text }, text)
+          try {
+            await createSubbotForPhone({ sock, msg, chat, sender, args: [], text }, text)
+          } catch (error) {
+            await sock.sendMessage(chat, { text: `❌ ${error?.message || 'No se pudo generar el código.'}` }, { quoted: msg }).catch(() => {})
+          }
           continue
         }
 
