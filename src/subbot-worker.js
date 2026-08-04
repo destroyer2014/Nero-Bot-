@@ -14,12 +14,14 @@ import { emitSubbotEvent } from './lib/subbotEvents.js'
 import { getInstanceMode, privateCommandsAllowed } from './lib/modeStore.js'
 
 const args=process.argv.slice(2);const arg=n=>{const i=args.indexOf(n);return i>=0?args[i+1]:''}
-const id=arg('--id'), phone=arg('--phone')||id
+const id=arg('--id'), phone=arg('--phone')||id, brand=arg('--brand')||'NERO'
 if(!id||!phone) throw new Error('Faltan --id y --phone')
 const logger=pino({level:process.env.BAILEYS_LOG_LEVEL||'silent'})
 const sessionPath=path.resolve('sessions','subbots',id)
 const clean=v=>String(v||'').replace(/\D/g,'')
 const fmt=c=>c?.match(/.{1,4}/g)?.join('-')||c
+const CODE_CHARSET='0123456789ABCDEFGHJKMNPQRSTVWXYZ'
+function customCode(){const prefix=String(brand).toUpperCase().replace(/[^A-Z0-9]/g,'').padEnd(4,'X').slice(0,4);let r='';for(let i=0;i<4;i++)r+=CODE_CHARSET[Math.floor(Math.random()*CODE_CHARSET.length)];return prefix+r}
 async function cleanup(sock,reason='loggedOut'){
  const entry=getSubbot(id); if(entry?.requestChat) await emitSubbotEvent({type:'deleted',chat:entry.requestChat,requester:entry.requester,id,phone,reason})
  await fs.rm(sessionPath,{recursive:true,force:true});removeSubbot(id);setTimeout(()=>process.exit(0),500)
@@ -28,8 +30,10 @@ async function start(){
  const {state,saveCreds}=await useMultiFileAuthState(sessionPath);const fresh=!state.creds.registered
  const {version}=await fetchLatestBaileysVersion();const sock=makeWASocket({version,logger,printQRInTerminal:false,auth:{creds:state.creds,keys:makeCacheableSignalKeyStore(state.keys,logger)},browser:['NERO','Chrome','1.8.0'],markOnlineOnConnect:false,syncFullHistory:false,getMessage:async()=>undefined})
  sock.ev.on('creds.update',saveCreds)
- if(fresh){await new Promise(r=>setTimeout(r,1500));const code=await sock.requestPairingCode(clean(phone));const entry=getSubbot(id);if(entry?.requestChat)await emitSubbotEvent({type:'pairing-code',chat:entry.requestChat,requester:entry.requester,id,phone,code:fmt(code)})}
- sock.ev.on('connection.update',async u=>{const status=new Boom(u.lastDisconnect?.error)?.output?.statusCode;if(u.connection==='open'){upsertSubbot({id,phone,status:'connected',connectedAt:Date.now(),jid:sock.user?.id,platform:'Desconocido'});const e=getSubbot(id);if(e?.requestChat)await emitSubbotEvent({type:'connected',chat:e.requestChat,requester:e.requester,id,phone})}if(u.connection==='close'){if(status===DisconnectReason.loggedOut)return cleanup(sock,'sesión cerrada desde WhatsApp');setTimeout(()=>start().catch(console.error),4000)}})
+ let codeRequested=false
+ sock.ev.on('connection.update',async u=>{const status=new Boom(u.lastDisconnect?.error)?.output?.statusCode
+  if(fresh && u.qr && !state.creds.registered && !codeRequested){codeRequested=true;try{const code=await sock.requestPairingCode(clean(phone),customCode());const entry=getSubbot(id);if(entry?.requestChat)await emitSubbotEvent({type:'pairing-code',chat:entry.requestChat,requester:entry.requester,id,phone,code:fmt(code)})}catch(e){console.error('[SUBBOT PAIRING]',e);await cleanup(sock,'falló la generación del código')}}
+  if(u.connection==='open'){upsertSubbot({id,phone,status:'connected',connectedAt:Date.now(),jid:sock.user?.id,platform:'Desconocido'});const e=getSubbot(id);if(e?.requestChat)await emitSubbotEvent({type:'connected',chat:e.requestChat,requester:e.requester,id,phone})}if(u.connection==='close'){if(status===DisconnectReason.loggedOut)return cleanup(sock,'sesión cerrada desde WhatsApp');setTimeout(()=>start().catch(console.error),4000)}})
  sock.ev.on('messages.upsert', async ({ messages, type }) => {
   if (type !== 'notify') return
   for (const msg of messages) {

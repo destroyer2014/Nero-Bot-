@@ -1,9 +1,10 @@
 export default {
   botName: 'Nero Bot',
+  subbotBrand: 'NERO',
   creator: 'ArcadiaCorps',
   plugins: '60+',
   website: 'https://arcadiacorps.online',
-  version: '1.8.3',
+  version: '1.8.4',
   prefix: '.',
   timezone: 'America/Lima',
   sessionName: 'principal',

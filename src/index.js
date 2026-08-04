@@ -22,6 +22,8 @@ import { getGroupPrincipal } from './lib/principalStore.js'
 import { consumeSubbotEvents } from './lib/subbotEvents.js'
 import { sendInteractive, copyButton } from './lib/interactive.js'
 import { getInstanceMode, privateCommandsAllowed } from './lib/modeStore.js'
+import { hasPendingSubbotPhone, clearPendingSubbotPhone } from './lib/pendingSubbotPhone.js'
+import { createSubbotForPhone } from './commands/subbots.js'
 
 const logger = pino({ level: process.env.BAILEYS_LOG_LEVEL || 'silent' })
 const sessionPath = path.resolve('sessions', config.sessionName)
@@ -191,7 +193,7 @@ async function startNeroBot() {
         title: 'NERO • Vinculación de subbot',
         body: `✅ Sesión para: +${event.phone}\n\nCódigo: *${event.code}*\n\nEn WhatsApp abre Dispositivos vinculados > Vincular con número.`,
         footer: 'Nero Bot • El código vence pronto',
-        buttons: [copyButton('Copiar código', event.code)]
+        buttons: [copyButton('Copiar código NERO', event.code)]
       }, null).catch(() => sock.sendMessage(event.chat, { text: `🔐 *NERO*\nSesión: +${event.phone}\nCódigo: *${event.code}*` }))
     } else if (event.type === 'connected') {
       await sock.sendMessage(event.chat, { text: `✅ *Ahora eres subbot de Nero.*\nCuenta: +${event.phone}\nLa instancia quedó guardada y activa con PM2.` }).catch(() => {})
@@ -308,6 +310,12 @@ async function startNeroBot() {
           })
         }
         const text = extractText(msg.message)
+
+        if (hasPendingSubbotPhone(chat, sender) && /^\+?\d[\d\s-]{7,18}$/.test(text.trim())) {
+          clearPendingSubbotPhone(chat, sender)
+          await createSubbotForPhone({ sock, msg, chat, sender, args: [], text }, text)
+          continue
+        }
 
         const wasModerated = await moderateIncoming({ sock, msg, chat, sender, text, isOwner: isOwner(sender), isSubOwner: isSubOwner(sender) })
         if (wasModerated) continue

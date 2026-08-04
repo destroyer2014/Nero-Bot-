@@ -1,7 +1,7 @@
 {
   "name": "nero-bot",
-  "version": "1.8.3",
-  "description": "Nero Bot v1.8.3: menú sin bordes laterales, reacciones en texto y SubOwner corregido",
+  "version": "1.8.4",
+  "description": "Nero Bot v1.8.4: subbots con código NERO, número real y reacciones locales",
   "type": "module",
   "main": "src/index.js",
   "scripts": {
