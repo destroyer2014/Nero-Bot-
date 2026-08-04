@@ -1,3 +1,12 @@
+# v1.8.3
+
+- Rediseña `.menu` con encabezados `✦════ < SECCIÓN > ════⚝` y elimina las barras laterales.
+- `.reacciones` ahora muestra todas las acciones en texto, sin lista seleccionable.
+- Corrige el uso de reacciones con mención o mensaje citado y evita reportes falsos por falta de objetivo.
+- Mejora la detección de URLs de GIF en respuestas variables de la API.
+- Configura y normaliza al SubOwner `51921909260`.
+- Conserva IA, descargas, favoritos, subbots, moderación y comandos existentes.
+
 # v1.6.5
 - Carrusel TikTok con banner local y media por tarjeta.
 - Comandos de diagnóstico restringidos al owner.

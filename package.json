@@ -1,7 +1,7 @@
 {
   "name": "nero-bot",
-  "version": "1.8.2",
-  "description": "Nero Bot v1.8.2: menú clásico por secciones, reacciones anime y favoritos",
+  "version": "1.8.3",
+  "description": "Nero Bot v1.8.3: menú sin bordes laterales, reacciones en texto y SubOwner corregido",
   "type": "module",
   "main": "src/index.js",
   "scripts": {
