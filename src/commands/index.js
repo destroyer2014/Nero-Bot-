@@ -8,8 +8,10 @@ import { testCarousel, testModernInteractive } from './debug.js'
 import { aiCommands } from './ai.js'
 import { animeCommands } from './anime.js'
 import { ownerCommands } from './owner.js'
+import { safeOwnerCommands } from './owner-safe.js'
 import { reportCommand } from './report.js'
 import { subbotCommands } from './subbots.js'
+import { identityCommands } from './identity.js'
 import { modeCommands } from './mode.js'
 import { favoriteCommands } from './favorites.js'
 import { reactionCommands } from './reactions.js'
@@ -31,6 +33,7 @@ const commands = [
   ...reactionCommands,
   ...animeEvoCommands,
   ...subbotCommands,
+  ...identityCommands,
   ...downloadCommands,
   ...extraSearchCommands,
   ...toolCommands,
@@ -42,7 +45,8 @@ const commands = [
   ...stalkingCommands,
   ...nsfwCommands,
   ...moderationCommands,
-  ...ownerCommands
+  ...ownerCommands,
+  ...safeOwnerCommands
 ]
 
 const commandMap = new Map()
