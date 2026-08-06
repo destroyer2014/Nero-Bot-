@@ -13,11 +13,34 @@ import { subbotCommands } from './subbots.js'
 import { modeCommands } from './mode.js'
 import { favoriteCommands } from './favorites.js'
 import { reactionCommands } from './reactions.js'
+import { nsfwCommands } from './nsfw.js'
+import { stalkingCommands } from './stalking.js'
 
-const commands = [menu, ping, info, reportCommand, ...modeCommands, ...favoriteCommands, ...reactionCommands, ...subbotCommands, ...downloadCommands, ...toolCommands, ...aiCommands, ...animeCommands, ...moderationCommands, ...ownerCommands]
+const commands = [
+  menu,
+  ping,
+  info,
+  reportCommand,
+  ...modeCommands,
+  ...favoriteCommands,
+  ...reactionCommands,
+  ...subbotCommands,
+  ...downloadCommands,
+  ...toolCommands,
+  ...aiCommands,
+  ...animeCommands,
+  ...stalkingCommands,
+  ...nsfwCommands,
+  ...moderationCommands,
+  ...ownerCommands
+]
+
 const commandMap = new Map()
 for (const command of commands) {
   commandMap.set(command.name, command)
   for (const alias of command.aliases || []) commandMap.set(alias, command)
 }
-export function findCommand(name) { return commandMap.get(name.toLowerCase()) }
+
+export function findCommand(name) {
+  return commandMap.get(name.toLowerCase())
+}

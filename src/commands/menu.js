@@ -78,6 +78,29 @@ const sections = [
     ]
   },
   {
+    title: '🔎 STALKING PÚBLICO',
+    entries: [
+      ['.githubstalk + [usuario]', 'Consulta información pública de GitHub.'],
+      ['.instagramstalk + [usuario]', 'Consulta información pública de Instagram.'],
+      ['.robloxstalk + [usuario]', 'Consulta información pública de Roblox.'],
+      ['.telegramstalk + [canal]', 'Consulta información pública de un canal de Telegram.'],
+      ['.tiktokstalk + [usuario]', 'Consulta información pública de TikTok.']
+    ]
+  },
+  {
+    title: '🔞 NSFW — SOLO ADULTOS',
+    entries: [
+      ['.nsfwactivar on/off', 'Activa o desactiva la sección adulta en el grupo; solo administradores.'],
+      ['.nsfwmenu', 'Muestra búsquedas, descargas, aleatorios e interacciones disponibles.'],
+      ['.pornhubsearch • .xnxxsearch • .xvideossearch', 'Busca contenido adulto mediante EvoGB.'],
+      ['.xvideosdl • .xnxxdl + [url]', 'Descarga un video desde una URL compatible.'],
+      ['.rule34img • .rule34video + [etiqueta]', 'Obtiene una imagen o video de Rule34.'],
+      ['.rnd18 + [categoría]', 'Obtiene contenido aleatorio de una categoría permitida.'],
+      ['.hentaivideo • .straight', 'Obtiene un video aleatorio para adultos.'],
+      ['.spank • .fuck • .lickpussy • ...', 'Las interacciones completas aparecen en .nsfwmenu.']
+    ]
+  },
+  {
     title: '🛡️ GRUPOS Y SEGURIDAD',
     entries: [
       ['.antinsfw • .antilink', 'Activa o desactiva funciones de seguridad.'],

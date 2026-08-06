@@ -1,12 +1,13 @@
 {
   "name": "nero-bot",
-  "version": "1.8.4",
-  "description": "Nero Bot v1.8.4: subbots con código NERO, número real y reacciones locales",
+  "version": "1.9.0",
+  "description": "Nero Bot v1.9.0: detector NSFW corregido, sección adulta controlada y stalking público",
   "type": "module",
   "main": "src/index.js",
   "scripts": {
     "start": "node src/index.js",
-    "dev": "node --watch src/index.js"
+    "dev": "node --watch src/index.js",
+    "check": "node --check src/index.js && node --check src/subbot-worker.js && node --check src/commands/nsfw.js && node --check src/commands/stalking.js && node --check src/lib/nsfwGuard.js"
   },
   "engines": {
     "node": ">=20"

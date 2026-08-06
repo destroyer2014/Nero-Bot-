@@ -30,6 +30,7 @@ import {
   getInstanceMode,
   privateCommandsAllowed
 } from './lib/modeStore.js'
+import { moderateIncoming } from './lib/nsfwGuard.js'
 
 const args = process.argv.slice(2)
 const arg = name => {
@@ -278,6 +279,21 @@ async function start() {
           ''
         )
         const text = extractText(msg.message)
+        const senderIsOwner = isOwner(sender)
+        const senderIsSubOwner = isSubOwner(sender)
+
+        const wasModerated = await moderateIncoming({
+          sock,
+          msg,
+          chat,
+          sender,
+          text,
+          isOwner: senderIsOwner,
+          isSubOwner: senderIsSubOwner,
+          instanceType: 'subbot',
+          instanceId: id
+        })
+        if (wasModerated) continue
 
         if (!text.startsWith(config.prefix)) continue
 
@@ -315,8 +331,8 @@ async function start() {
           args: commandArgs,
           text,
           permissionLevel: getPermissionLevel(sender),
-          isOwner: isOwner(sender),
-          isSubOwner: isSubOwner(sender),
+          isOwner: senderIsOwner,
+          isSubOwner: senderIsSubOwner,
           isStaff: isStaff(sender),
           instanceType: 'subbot',
           instanceId: id
