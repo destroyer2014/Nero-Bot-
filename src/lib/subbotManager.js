@@ -8,7 +8,7 @@ const pending = new Map()
 
 function runPm2(args, { allowFailure = false } = {}) {
   return new Promise((resolve, reject) => {
-    const process = spawn('pm2', args, {
+    const child = spawn('pm2', args, {
       cwd: process.cwd(),
       stdio: ['ignore', 'pipe', 'pipe'],
       detached: false
@@ -17,17 +17,17 @@ function runPm2(args, { allowFailure = false } = {}) {
     let stdout = ''
     let stderr = ''
 
-    process.stdout.on('data', chunk => {
+    child.stdout.on('data', chunk => {
       stdout += chunk.toString()
       if (stdout.length > 12000) stdout = stdout.slice(-12000)
     })
 
-    process.stderr.on('data', chunk => {
+    child.stderr.on('data', chunk => {
       stderr += chunk.toString()
       if (stderr.length > 12000) stderr = stderr.slice(-12000)
     })
 
-    process.once('error', error => {
+    child.once('error', error => {
       if (error.code === 'ENOENT') {
         reject(new Error('PM2 no está instalado o no está disponible en PATH.'))
       } else {
@@ -35,7 +35,7 @@ function runPm2(args, { allowFailure = false } = {}) {
       }
     })
 
-    process.once('close', code => {
+    child.once('close', code => {
       const result = { code, stdout: stdout.trim(), stderr: stderr.trim() }
       if (code === 0 || allowFailure) {
         resolve(result)

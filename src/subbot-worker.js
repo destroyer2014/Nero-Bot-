@@ -50,6 +50,49 @@ const wait = ms => new Promise(resolve => setTimeout(resolve, ms))
 
 let cleaningUp = false
 
+async function refreshGroups(sock) {
+  try {
+    if (typeof sock.groupFetchAllParticipating !== 'function') {
+      throw new Error('La versión actual de Baileys no expone groupFetchAllParticipating.')
+    }
+
+    const groups = await sock.groupFetchAllParticipating()
+    const groupIds = Object.keys(groups || {})
+      .filter(groupId => groupId.endsWith('@g.us'))
+
+    upsertSubbot({
+      id,
+      phone,
+      groups: groupIds,
+      groupsUpdatedAt: Date.now()
+    })
+
+    console.log(`[SUBBOT GROUPS] ${id}: ${groupIds.length} grupos`)
+    return groupIds
+  } catch (error) {
+    console.warn('[SUBBOT GROUPS]', error?.message || error)
+    return getSubbot(id)?.groups || []
+  }
+}
+
+function rememberGroup(groupId) {
+  if (!groupId?.endsWith('@g.us')) return
+
+  const entry = getSubbot(id)
+  const groups = new Set(entry?.groups || [])
+
+  if (groups.has(groupId)) return
+
+  groups.add(groupId)
+
+  upsertSubbot({
+    id,
+    phone,
+    groups: [...groups],
+    groupsUpdatedAt: Date.now()
+  })
+}
+
 async function requestDefaultPairingCode(sock) {
   const phoneNumber = clean(phone)
   let lastError
@@ -95,9 +138,6 @@ async function cleanup(reason = 'sesión cerrada') {
 
   await fs.rm(sessionPath, { recursive: true, force: true })
   removeSubbot(id)
-
-  // Código 0 evita que PM2 reinicie un intento fallido cuando se usa
-  // --stop-exit-codes 0.
   setTimeout(() => process.exit(0), 300)
 }
 
@@ -126,6 +166,10 @@ async function start() {
 
   sock.ev.on('creds.update', saveCreds)
 
+  sock.ev.on('groups.update', () => {
+    refreshGroups(sock).catch(() => {})
+  })
+
   sock.ev.on('connection.update', async update => {
     const statusCode = new Boom(
       update.lastDisconnect?.error
@@ -140,6 +184,13 @@ async function start() {
         jid: sock.user?.id,
         platform: 'Desconocido'
       })
+
+      await refreshGroups(sock)
+
+      const delayedRefresh = setTimeout(() => {
+        refreshGroups(sock).catch(() => {})
+      }, 5000)
+      delayedRefresh.unref?.()
 
       const entry = getSubbot(id)
       if (entry?.requestChat) {
@@ -177,8 +228,6 @@ async function start() {
     }
   })
 
-  // No esperamos el evento QR. La vinculación por número se solicita
-  // inmediatamente después de crear el socket, igual que en el bot principal.
   if (needsPairing) {
     try {
       const code = await requestDefaultPairingCode(sock)
@@ -204,6 +253,7 @@ async function start() {
       }
     } catch (error) {
       console.error('[SUBBOT PAIRING]', error)
+
       await cleanup(
         `falló la generación del código: ${error?.message || error}`
       )
@@ -219,6 +269,8 @@ async function start() {
         if (!msg.message || msg.key.remoteJid === 'status@broadcast') continue
 
         const chat = msg.key.remoteJid
+        rememberGroup(chat)
+
         const sender = jidNormalizedUser(
           msg.key.participant ||
           msg.key.remoteJidAlt ||
