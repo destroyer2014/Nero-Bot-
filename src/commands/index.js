@@ -15,6 +15,11 @@ import { favoriteCommands } from './favorites.js'
 import { reactionCommands } from './reactions.js'
 import { nsfwCommands } from './nsfw.js'
 import { stalkingCommands } from './stalking.js'
+import { stickerCommands } from './stickers.js'
+import { generatorCommands } from './generators.js'
+import { extraSearchCommands } from './extra-search.js'
+import { extraUtilityCommands } from './extra-utils.js'
+import { animeEvoCommands } from './anime-evo.js'
 
 const commands = [
   menu,
@@ -24,9 +29,14 @@ const commands = [
   ...modeCommands,
   ...favoriteCommands,
   ...reactionCommands,
+  ...animeEvoCommands,
   ...subbotCommands,
   ...downloadCommands,
+  ...extraSearchCommands,
   ...toolCommands,
+  ...extraUtilityCommands,
+  ...generatorCommands,
+  ...stickerCommands,
   ...aiCommands,
   ...animeCommands,
   ...stalkingCommands,
