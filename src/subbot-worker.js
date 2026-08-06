@@ -1,6 +1,8 @@
 import 'dotenv/config'
 import path from 'node:path'
 import fs from 'node:fs/promises'
+import fsSync from 'node:fs'
+import sharp from 'sharp'
 import pino from 'pino'
 import { Boom } from '@hapi/boom'
 import makeWASocket, {
@@ -31,6 +33,7 @@ import {
   privateCommandsAllowed
 } from './lib/modeStore.js'
 import { moderateIncoming } from './lib/nsfwGuard.js'
+import { getSubbotConfig, watchSubbotConfig } from './lib/subbotConfigStore.js'
 
 const args = process.argv.slice(2)
 const arg = name => {
@@ -50,6 +53,165 @@ const formatCode = code => code?.match(/.{1,4}/g)?.join('-') || code
 const wait = ms => new Promise(resolve => setTimeout(resolve, ms))
 
 let cleaningUp = false
+let sockRef = null
+let runtimeConfig = getSubbotConfig(id, {
+  botName: config.botName,
+  prefix: config.prefix
+})
+let lastAppliedProfile = {}
+let profileQueue = Promise.resolve()
+let lastProfileRequestAt = 0
+
+function isRateLimit(error) {
+  return /rate[-_ ]?overlimit|too many requests|\b429\b/i.test(
+    String(error?.message || error || '')
+  )
+}
+
+function applyRuntimeConfig(next) {
+  runtimeConfig = next
+  upsertSubbot({
+    id,
+    phone,
+    config: next,
+    displayName: next.botName,
+    prefix: next.prefix
+  })
+  console.log(
+    `[SUBBOT CONFIG] ${id}: nombre=${next.botName}, prefijo=${next.prefix}`
+  )
+}
+
+async function avatarBuffer(next) {
+  let input
+
+  if (next.avatarPath) {
+    const resolved = path.resolve(next.avatarPath)
+    const allowedRoot = path.resolve('runtime', 'subbot-assets', id)
+    if (!resolved.startsWith(`${allowedRoot}${path.sep}`) && resolved !== allowedRoot) {
+      throw new Error('La ruta del avatar no está permitida.')
+    }
+    const stat = await fs.stat(resolved)
+    if (stat.size > 2 * 1024 * 1024) throw new Error('El avatar supera 2 MB.')
+    input = await fs.readFile(resolved)
+  } else if (next.avatarUrl) {
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), 15_000)
+    try {
+      const response = await fetch(next.avatarUrl, {
+        redirect: 'follow',
+        signal: controller.signal,
+        headers: { accept: 'image/*' }
+      })
+      if (!response.ok) throw new Error(`HTTP ${response.status}`)
+      const type = String(response.headers.get('content-type') || '')
+      if (!type.startsWith('image/')) throw new Error('La URL no entrega una imagen.')
+      const declared = Number(response.headers.get('content-length') || 0)
+      if (declared > 2 * 1024 * 1024) throw new Error('El avatar supera 2 MB.')
+      const raw = Buffer.from(await response.arrayBuffer())
+      if (raw.length > 2 * 1024 * 1024) throw new Error('El avatar supera 2 MB.')
+      input = raw
+    } finally {
+      clearTimeout(timer)
+    }
+  } else {
+    return null
+  }
+
+  return sharp(input)
+    .rotate()
+    .resize(640, 640, { fit: 'cover' })
+    .jpeg({ quality: 88 })
+    .toBuffer()
+}
+
+async function applyWhatsAppProfile(sock, previous, next) {
+  if (!next.applyProfile || !sock?.user) return
+
+  const changedName = next.botName !== previous.botName
+  const changedStatus = next.statusText !== previous.statusText
+  const changedAvatar =
+    next.avatarUrl !== previous.avatarUrl ||
+    next.avatarPath !== previous.avatarPath
+
+  if (!changedName && !changedStatus && !changedAvatar) return
+
+  const elapsed = Date.now() - lastProfileRequestAt
+  if (elapsed < 5000) await wait(5000 - elapsed)
+  lastProfileRequestAt = Date.now()
+
+  const result = {}
+
+  try {
+    if (
+      changedName &&
+      next.botName &&
+      typeof sock.updateProfileName === 'function'
+    ) {
+      await sock.updateProfileName(next.botName)
+      result.nameApplied = true
+    }
+
+    if (
+      changedStatus &&
+      typeof sock.updateProfileStatus === 'function'
+    ) {
+      await sock.updateProfileStatus(next.statusText || '')
+      result.statusApplied = true
+    }
+
+    if (
+      changedAvatar &&
+      typeof sock.updateProfilePicture === 'function'
+    ) {
+      const buffer = await avatarBuffer(next)
+      if (buffer) {
+        await sock.updateProfilePicture(sock.user.id, buffer)
+        result.avatarApplied = true
+      }
+    }
+
+    lastAppliedProfile = {
+      ...lastAppliedProfile,
+      ...result,
+      lastAppliedAt: Date.now(),
+      lastError: null
+    }
+  } catch (error) {
+    const message = isRateLimit(error)
+      ? 'WhatsApp aplicó un límite temporal al perfil.'
+      : String(error?.message || error)
+
+    lastAppliedProfile = {
+      ...lastAppliedProfile,
+      lastAppliedAt: Date.now(),
+      lastError: message
+    }
+
+    console.warn('[SUBBOT PROFILE]', message)
+  }
+
+  upsertSubbot({
+    id,
+    phone,
+    profile: lastAppliedProfile
+  })
+}
+
+applyRuntimeConfig(runtimeConfig)
+watchSubbotConfig(id, next => {
+  const previous = runtimeConfig
+  applyRuntimeConfig(next)
+
+  if (sockRef) {
+    profileQueue = profileQueue
+      .then(() => applyWhatsAppProfile(sockRef, previous, next))
+      .catch(error => console.warn('[SUBBOT PROFILE QUEUE]', error?.message || error))
+  }
+}, {
+  botName: config.botName,
+  prefix: config.prefix
+})
 
 async function refreshGroups(sock) {
   try {
@@ -165,6 +327,7 @@ async function start() {
     getMessage: async () => undefined
   })
 
+  sockRef = sock
   sock.ev.on('creds.update', saveCreds)
 
   sock.ev.on('groups.update', () => {
@@ -187,6 +350,7 @@ async function start() {
       })
 
       await refreshGroups(sock)
+      await applyWhatsAppProfile(sock, {}, runtimeConfig)
 
       const delayedRefresh = setTimeout(() => {
         refreshGroups(sock).catch(() => {})
@@ -262,6 +426,51 @@ async function start() {
     }
   }
 
+  sock.ev.on('group-participants.update', async update => {
+    try {
+      const groupId = update?.id || update?.jid
+      const participants = Array.isArray(update?.participants)
+        ? update.participants
+        : []
+      const action = String(update?.action || '').toLowerCase()
+      if (!groupId || !participants.length) return
+
+      const isAdd = ['add', 'invite', 'join'].includes(action)
+      const isRemove = ['remove', 'leave'].includes(action)
+      if (
+        (isAdd && !runtimeConfig.welcomeEnabled) ||
+        (isRemove && !runtimeConfig.goodbyeEnabled) ||
+        (!isAdd && !isRemove)
+      ) return
+
+      const metadata = await sock.groupMetadata(groupId).catch(() => null)
+      if (!metadata) return
+
+      for (const raw of participants) {
+        const participant = typeof raw === 'string'
+          ? raw
+          : raw?.id || raw?.jid || raw?.lid || raw?.phoneNumber
+        if (!participant) continue
+
+        const template = isAdd
+          ? runtimeConfig.welcomeText
+          : runtimeConfig.goodbyeText
+
+        const text = String(template || '')
+          .replaceAll('@user', `@${String(participant).split('@')[0]}`)
+          .replaceAll('@group', metadata.subject || 'el grupo')
+          .replaceAll('@members', String(metadata.participants?.length || 0))
+
+        await sock.sendMessage(groupId, {
+          text,
+          mentions: [participant]
+        }).catch(() => {})
+      }
+    } catch (error) {
+      console.warn('[SUBBOT WELCOME]', error?.message || error)
+    }
+  })
+
   sock.ev.on('messages.upsert', async ({ messages, type }) => {
     if (type !== 'notify') return
 
@@ -291,19 +500,26 @@ async function start() {
           isOwner: senderIsOwner,
           isSubOwner: senderIsSubOwner,
           instanceType: 'subbot',
-          instanceId: id
+          instanceId: id,
+          prefix: runtimeConfig.prefix,
+          botName: runtimeConfig.botName,
+          subbotConfig: runtimeConfig,
+          packName: runtimeConfig.packName,
+          packAuthor: runtimeConfig.packAuthor
         })
         if (wasModerated) continue
 
-        if (!text.startsWith(config.prefix)) continue
+        if (runtimeConfig.autoRead) await sock.readMessages([msg.key]).catch(() => {})
+        if (!text.startsWith(runtimeConfig.prefix)) continue
 
         const [raw, ...commandArgs] = text
-          .slice(config.prefix.length)
+          .slice(runtimeConfig.prefix.length)
           .trim()
           .split(/\s+/)
 
         const command = findCommand(raw)
         if (!command) continue
+        if (runtimeConfig.disabledCommands.includes(String(command.name || raw).toLowerCase())) continue
 
         const privateChat = !chat.endsWith('@g.us')
 
@@ -335,7 +551,12 @@ async function start() {
           isSubOwner: senderIsSubOwner,
           isStaff: isStaff(sender),
           instanceType: 'subbot',
-          instanceId: id
+          instanceId: id,
+          prefix: runtimeConfig.prefix,
+          botName: runtimeConfig.botName,
+          subbotConfig: runtimeConfig,
+          packName: runtimeConfig.packName,
+          packAuthor: runtimeConfig.packAuthor
         })
       } catch (error) {
         await sock.sendMessage(msg.key.remoteJid, {
