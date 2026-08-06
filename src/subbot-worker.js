@@ -14,14 +14,29 @@ import { emitSubbotEvent } from './lib/subbotEvents.js'
 import { getInstanceMode, privateCommandsAllowed } from './lib/modeStore.js'
 
 const args=process.argv.slice(2);const arg=n=>{const i=args.indexOf(n);return i>=0?args[i+1]:''}
-const id=arg('--id'), phone=arg('--phone')||id, brand=arg('--brand')||'NERO'
+const id=arg('--id'), phone=arg('--phone')||id
 if(!id||!phone) throw new Error('Faltan --id y --phone')
 const logger=pino({level:process.env.BAILEYS_LOG_LEVEL||'silent'})
 const sessionPath=path.resolve('sessions','subbots',id)
 const clean=v=>String(v||'').replace(/\D/g,'')
 const fmt=c=>c?.match(/.{1,4}/g)?.join('-')||c
-const CODE_CHARSET='0123456789ABCDEFGHJKMNPQRSTVWXYZ'
-function customCode(){const prefix=String(brand).toUpperCase().replace(/[^A-Z0-9]/g,'').padEnd(4,'X').slice(0,4);let r='';for(let i=0;i<4;i++)r+=CODE_CHARSET[Math.floor(Math.random()*CODE_CHARSET.length)];return prefix+r}
+const wait=ms=>new Promise(resolve=>setTimeout(resolve,ms))
+async function requestDefaultPairingCode(sock){
+ const phoneNumber=clean(phone)
+ let lastError
+ for(let attempt=1;attempt<=3;attempt++){
+  try{
+   await wait(attempt===1?1500:3000)
+   const code=await sock.requestPairingCode(phoneNumber)
+   if(!code)throw new Error('WhatsApp no devolvió un código de vinculación.')
+   return code
+  }catch(error){
+   lastError=error
+   console.error(`[SUBBOT PAIRING] intento ${attempt}/3:`,error?.message||error)
+  }
+ }
+ throw lastError||new Error('No se pudo solicitar el código de WhatsApp.')
+}
 async function cleanup(sock,reason='loggedOut'){
  const entry=getSubbot(id); if(entry?.requestChat) await emitSubbotEvent({type:'deleted',chat:entry.requestChat,requester:entry.requester,id,phone,reason})
  await fs.rm(sessionPath,{recursive:true,force:true});removeSubbot(id);setTimeout(()=>process.exit(0),500)
@@ -32,7 +47,7 @@ async function start(){
  sock.ev.on('creds.update',saveCreds)
  let codeRequested=false
  sock.ev.on('connection.update',async u=>{const status=new Boom(u.lastDisconnect?.error)?.output?.statusCode
-  if(fresh && u.qr && !state.creds.registered && !codeRequested){codeRequested=true;try{const code=await sock.requestPairingCode(clean(phone),customCode());const entry=getSubbot(id);if(entry?.requestChat)await emitSubbotEvent({type:'pairing-code',chat:entry.requestChat,requester:entry.requester,id,phone,code:fmt(code)})}catch(e){console.error('[SUBBOT PAIRING]',e);await cleanup(sock,'falló la generación del código')}}
+  if(fresh && u.qr && !state.creds.registered && !codeRequested){codeRequested=true;try{const code=await requestDefaultPairingCode(sock);const entry=getSubbot(id);if(entry?.requestChat)await emitSubbotEvent({type:'pairing-code',chat:entry.requestChat,requester:entry.requester,id,phone,code,formattedCode:fmt(code)})}catch(e){console.error('[SUBBOT PAIRING]',e);await cleanup(sock,'falló la generación del código')}}
   if(u.connection==='open'){upsertSubbot({id,phone,status:'connected',connectedAt:Date.now(),jid:sock.user?.id,platform:'Desconocido'});const e=getSubbot(id);if(e?.requestChat)await emitSubbotEvent({type:'connected',chat:e.requestChat,requester:e.requester,id,phone})}if(u.connection==='close'){if(status===DisconnectReason.loggedOut)return cleanup(sock,'sesión cerrada desde WhatsApp');setTimeout(()=>start().catch(console.error),4000)}})
  sock.ev.on('messages.upsert', async ({ messages, type }) => {
   if (type !== 'notify') return

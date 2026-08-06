@@ -1,5 +1,9 @@
 import { downloadMediaMessage } from '@itsliaaa/baileys'
 import sharp from 'sharp'
+import { spawn } from 'node:child_process'
+import fs from 'node:fs/promises'
+import os from 'node:os'
+import path from 'node:path'
 import config from '../../config.js'
 import { apiGet, evoGet, requireEvoGbApiKey } from '../lib/api.js'
 import { sendRemoteMedia, sendImageAlbum, formatBytes, isLikelyUrl } from '../lib/media.js'
@@ -107,13 +111,59 @@ async function imageToSticker(buffer){
   throw new Error(`No pude convertir esta imagen a sticker: ${error.message}`)
  }
 }
+async function runFfmpeg(args){
+ return new Promise((resolve,reject)=>{
+  const process=spawn('ffmpeg',args,{stdio:['ignore','ignore','pipe']})
+  let stderr=''
+  process.stderr.on('data',chunk=>{stderr+=chunk.toString();if(stderr.length>8000)stderr=stderr.slice(-8000)})
+  process.once('error',error=>{
+   if(error.code==='ENOENT')reject(new Error('FFmpeg no está instalado en el VPS. Ejecuta: apt update && apt install -y ffmpeg'))
+   else reject(error)
+  })
+  process.once('close',code=>{
+   if(code===0)resolve()
+   else reject(new Error(`FFmpeg terminó con código ${code}: ${stderr.slice(-600)}`))
+  })
+ })
+}
+async function encodeVideoSticker(input,output,{fps,quality}){
+ await runFfmpeg([
+  '-y','-i',input,'-t','6',
+  '-vf',`fps=${fps},scale=512:512:force_original_aspect_ratio=decrease:flags=lanczos,pad=512:512:(ow-iw)/2:(oh-ih)/2:color=0x00000000`,
+  '-an','-vcodec','libwebp','-lossless','0','-compression_level','6','-q:v',String(quality),'-loop','0',output
+ ])
+}
+async function videoToSticker(buffer){
+ const dir=await fs.mkdtemp(path.join(os.tmpdir(),'nero-sticker-'))
+ const input=path.join(dir,'input.mp4')
+ const output=path.join(dir,'output.webp')
+ try{
+  await fs.writeFile(input,buffer)
+  await encodeVideoSticker(input,output,{fps:15,quality:55})
+  let webp=await fs.readFile(output)
+  if(webp.length>1024*1024){
+   await encodeVideoSticker(input,output,{fps:10,quality:38})
+   webp=await fs.readFile(output)
+  }
+  if(!webp.length||webp.length<100)throw new Error('La conversión del video generó un archivo vacío.')
+  if(webp.length>1024*1024)throw new Error('El video sigue siendo demasiado pesado para un sticker. Recórtalo o usa uno de menor resolución.')
+  return webp
+ }finally{
+  await fs.rm(dir,{recursive:true,force:true}).catch(()=>{})
+ }
+}
 export const sticker=wrap('sticker',['s'],async ctx=>{
  const media=messageMediaType(ctx.msg)
  const b=await mediaBuffer(ctx)
- if(!b)throw new Error('Responde a una imagen con .sticker o .s')
- if(media.type==='video')throw new Error('Los stickers de video todavía no están habilitados. Usa una imagen por ahora.')
- if(!['image','sticker'].includes(media.type))throw new Error('Responde a una imagen o sticker válido.')
- const webp=media.type==='sticker'&&media.mimetype==='image/webp'?b:await imageToSticker(b)
+ if(!b)throw new Error('Responde a una imagen o video con .sticker o .s')
+ if(!['image','sticker','video'].includes(media.type))throw new Error('Responde a una imagen, video o sticker válido.')
+ let webp
+ if(media.type==='video'){
+  await ctx.sock.sendMessage(ctx.chat,{text:'🎞️ Convirtiendo los primeros 6 segundos del video a sticker animado...'},{quoted:ctx.msg})
+  webp=await videoToSticker(b)
+ }else{
+  webp=media.type==='sticker'&&media.mimetype==='image/webp'?b:await imageToSticker(b)
+ }
  if(!webp?.length||webp.length<100)throw new Error('La conversión generó un archivo vacío.')
  await ctx.sock.sendMessage(ctx.chat,{sticker:webp},{quoted:ctx.msg})
 })

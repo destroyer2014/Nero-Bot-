@@ -257,10 +257,10 @@ async function startNeroBot() {
     if (event.type === 'pairing-code') {
       await sendInteractive(sock, event.chat, {
         title: 'NERO • Vinculación de subbot',
-        body: `✅ Sesión para: +${event.phone}\n\nCódigo: *${event.code}*\n\nEn WhatsApp abre Dispositivos vinculados > Vincular con número.`,
+        body: `✅ Sesión para: +${event.phone}\n\nCódigo: *${event.formattedCode || event.code}*\n\nEn WhatsApp abre Dispositivos vinculados > Vincular con número.`,
         footer: 'Nero Bot • El código vence pronto',
-        buttons: [copyButton('Copiar código NERO', event.code)]
-      }, null).catch(() => sock.sendMessage(event.chat, { text: `🔐 *NERO*\nSesión: +${event.phone}\nCódigo: *${event.code}*` }))
+        buttons: [copyButton('Copiar código', event.code)]
+      }, null).catch(() => sock.sendMessage(event.chat, { text: `🔐 *NERO*\nSesión: +${event.phone}\nCódigo: *${event.formattedCode || event.code}*` }))
     } else if (event.type === 'connected') {
       await sock.sendMessage(event.chat, { text: `✅ *Ahora eres subbot de Nero.*\nCuenta: +${event.phone}\nLa instancia quedó guardada y activa con PM2.` }).catch(() => {})
     } else if (event.type === 'deleted') {
