@@ -3,99 +3,282 @@ import path from 'node:path'
 import fs from 'node:fs/promises'
 import pino from 'pino'
 import { Boom } from '@hapi/boom'
-import makeWASocket,{DisconnectReason,useMultiFileAuthState,fetchLatestBaileysVersion,makeCacheableSignalKeyStore,jidNormalizedUser} from '@itsliaaa/baileys'
+import makeWASocket, {
+  DisconnectReason,
+  useMultiFileAuthState,
+  fetchLatestBaileysVersion,
+  makeCacheableSignalKeyStore,
+  jidNormalizedUser
+} from '@itsliaaa/baileys'
 import config from '../config.js'
 import { extractText } from './lib/text.js'
 import { findCommand } from './commands/index.js'
-import { getPermissionLevel,isOwner,isSubOwner,isStaff } from './lib/permissions.js'
-import { upsertSubbot,getSubbot,removeSubbot } from './lib/subbotRegistry.js'
+import {
+  getPermissionLevel,
+  isOwner,
+  isSubOwner,
+  isStaff
+} from './lib/permissions.js'
+import {
+  upsertSubbot,
+  getSubbot,
+  removeSubbot
+} from './lib/subbotRegistry.js'
 import { getGroupPrincipal } from './lib/principalStore.js'
 import { emitSubbotEvent } from './lib/subbotEvents.js'
-import { getInstanceMode, privateCommandsAllowed } from './lib/modeStore.js'
+import {
+  getInstanceMode,
+  privateCommandsAllowed
+} from './lib/modeStore.js'
 
-const args=process.argv.slice(2);const arg=n=>{const i=args.indexOf(n);return i>=0?args[i+1]:''}
-const id=arg('--id'), phone=arg('--phone')||id
-if(!id||!phone) throw new Error('Faltan --id y --phone')
-const logger=pino({level:process.env.BAILEYS_LOG_LEVEL||'silent'})
-const sessionPath=path.resolve('sessions','subbots',id)
-const clean=v=>String(v||'').replace(/\D/g,'')
-const fmt=c=>c?.match(/.{1,4}/g)?.join('-')||c
-const wait=ms=>new Promise(resolve=>setTimeout(resolve,ms))
-async function requestDefaultPairingCode(sock){
- const phoneNumber=clean(phone)
- let lastError
- for(let attempt=1;attempt<=3;attempt++){
-  try{
-   await wait(attempt===1?1500:3000)
-   const code=await sock.requestPairingCode(phoneNumber)
-   if(!code)throw new Error('WhatsApp no devolvió un código de vinculación.')
-   return code
-  }catch(error){
-   lastError=error
-   console.error(`[SUBBOT PAIRING] intento ${attempt}/3:`,error?.message||error)
+const args = process.argv.slice(2)
+const arg = name => {
+  const index = args.indexOf(name)
+  return index >= 0 ? args[index + 1] : ''
+}
+
+const id = arg('--id')
+const phone = arg('--phone') || id
+
+if (!id || !phone) throw new Error('Faltan --id y --phone')
+
+const logger = pino({ level: process.env.BAILEYS_LOG_LEVEL || 'silent' })
+const sessionPath = path.resolve('sessions', 'subbots', id)
+const clean = value => String(value || '').replace(/\D/g, '')
+const formatCode = code => code?.match(/.{1,4}/g)?.join('-') || code
+const wait = ms => new Promise(resolve => setTimeout(resolve, ms))
+
+let cleaningUp = false
+
+async function requestDefaultPairingCode(sock) {
+  const phoneNumber = clean(phone)
+  let lastError
+
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    try {
+      await wait(attempt === 1 ? 1500 : 3000)
+      const code = await sock.requestPairingCode(phoneNumber)
+
+      if (!code) {
+        throw new Error('WhatsApp no devolvió un código de vinculación.')
+      }
+
+      return code
+    } catch (error) {
+      lastError = error
+      console.error(
+        `[SUBBOT PAIRING] intento ${attempt}/3:`,
+        error?.message || error
+      )
+    }
   }
- }
- throw lastError||new Error('No se pudo solicitar el código de WhatsApp.')
-}
-async function cleanup(sock,reason='loggedOut'){
- const entry=getSubbot(id); if(entry?.requestChat) await emitSubbotEvent({type:'deleted',chat:entry.requestChat,requester:entry.requester,id,phone,reason})
- await fs.rm(sessionPath,{recursive:true,force:true});removeSubbot(id);setTimeout(()=>process.exit(0),500)
-}
-async function start(){
- const {state,saveCreds}=await useMultiFileAuthState(sessionPath);const fresh=!state.creds.registered
- const {version}=await fetchLatestBaileysVersion();const sock=makeWASocket({version,logger,printQRInTerminal:false,auth:{creds:state.creds,keys:makeCacheableSignalKeyStore(state.keys,logger)},browser:['NERO','Chrome','1.8.0'],markOnlineOnConnect:false,syncFullHistory:false,getMessage:async()=>undefined})
- sock.ev.on('creds.update',saveCreds)
- let codeRequested=false
- sock.ev.on('connection.update',async u=>{const status=new Boom(u.lastDisconnect?.error)?.output?.statusCode
-  if(fresh && u.qr && !state.creds.registered && !codeRequested){codeRequested=true;try{const code=await requestDefaultPairingCode(sock);const entry=getSubbot(id);if(entry?.requestChat)await emitSubbotEvent({type:'pairing-code',chat:entry.requestChat,requester:entry.requester,id,phone,code,formattedCode:fmt(code)})}catch(e){console.error('[SUBBOT PAIRING]',e);await cleanup(sock,'falló la generación del código')}}
-  if(u.connection==='open'){upsertSubbot({id,phone,status:'connected',connectedAt:Date.now(),jid:sock.user?.id,platform:'Desconocido'});const e=getSubbot(id);if(e?.requestChat)await emitSubbotEvent({type:'connected',chat:e.requestChat,requester:e.requester,id,phone})}if(u.connection==='close'){if(status===DisconnectReason.loggedOut)return cleanup(sock,'sesión cerrada desde WhatsApp');setTimeout(()=>start().catch(console.error),4000)}})
- sock.ev.on('messages.upsert', async ({ messages, type }) => {
-  if (type !== 'notify') return
-  for (const msg of messages) {
-   try {
-    if (!msg.message || msg.key.remoteJid === 'status@broadcast') continue
-    const chat = msg.key.remoteJid
-    const sender = jidNormalizedUser(msg.key.participant || msg.key.remoteJidAlt || msg.key.remoteJid || '')
-    const text = extractText(msg.message)
-    if (!text.startsWith(config.prefix)) continue
 
-    const [raw, ...a] = text.slice(config.prefix.length).trim().split(/\s+/)
-    const command = findCommand(raw)
-    if (!command) continue
+  throw lastError || new Error('No se pudo solicitar el código de WhatsApp.')
+}
 
-    const privateChat = !chat.endsWith('@g.us')
-    if (privateChat && getInstanceMode('subbot', id) === 'groups' && !privateCommandsAllowed(raw)) {
-      await sock.sendMessage(chat, {
-        text: '🔒 *Este subbot está configurado en modo Solo grupos.*\nEste comando no está disponible en chats privados.'
-      }, { quoted: msg }).catch(() => {})
-      continue
+async function cleanup(reason = 'sesión cerrada') {
+  if (cleaningUp) return
+  cleaningUp = true
+
+  const entry = getSubbot(id)
+
+  if (entry?.requestChat) {
+    await emitSubbotEvent({
+      type: 'deleted',
+      chat: entry.requestChat,
+      requester: entry.requester,
+      id,
+      phone,
+      reason
+    }).catch(() => {})
+  }
+
+  await fs.rm(sessionPath, { recursive: true, force: true })
+  removeSubbot(id)
+
+  // Código 0 evita que PM2 reinicie un intento fallido cuando se usa
+  // --stop-exit-codes 0.
+  setTimeout(() => process.exit(0), 300)
+}
+
+async function start() {
+  const { state, saveCreds } = await useMultiFileAuthState(sessionPath)
+  const needsPairing = !state.creds.registered
+  const { version } = await fetchLatestBaileysVersion()
+
+  const sock = makeWASocket({
+    version,
+    logger,
+    printQRInTerminal: false,
+    auth: {
+      creds: state.creds,
+      keys: makeCacheableSignalKeyStore(state.keys, logger)
+    },
+    browser: ['Ubuntu', 'Chrome', '20.0.04'],
+    markOnlineOnConnect: false,
+    syncFullHistory: false,
+    generateHighQualityLinkPreview: true,
+    connectTimeoutMs: 60000,
+    defaultQueryTimeoutMs: undefined,
+    keepAliveIntervalMs: 10000,
+    getMessage: async () => undefined
+  })
+
+  sock.ev.on('creds.update', saveCreds)
+
+  sock.ev.on('connection.update', async update => {
+    const statusCode = new Boom(
+      update.lastDisconnect?.error
+    )?.output?.statusCode
+
+    if (update.connection === 'open') {
+      upsertSubbot({
+        id,
+        phone,
+        status: 'connected',
+        connectedAt: Date.now(),
+        jid: sock.user?.id,
+        platform: 'Desconocido'
+      })
+
+      const entry = getSubbot(id)
+      if (entry?.requestChat) {
+        await emitSubbotEvent({
+          type: 'connected',
+          chat: entry.requestChat,
+          requester: entry.requester,
+          id,
+          phone
+        }).catch(() => {})
+      }
     }
 
-    if (chat.endsWith('@g.us')) {
-      const chosen = getGroupPrincipal(chat) || 'principal'
-      if (chosen !== id) continue
-    }
+    if (update.connection === 'close') {
+      if (cleaningUp) return
 
-    await command.execute({
-      sock,
-      msg,
-      chat,
-      sender,
-      args: a,
-      text,
-      permissionLevel: getPermissionLevel(sender),
-      isOwner: isOwner(sender),
-      isSubOwner: isSubOwner(sender),
-      isStaff: isStaff(sender),
-      instanceType: 'subbot',
-      instanceId: id
-    })
-   } catch (e) {
-    await sock.sendMessage(msg.key.remoteJid, {
-      text: `❌ Error: ${e.message}\n\nUsa *.reportar <motivo>* para reportarlo.`
-    }, { quoted: msg }).catch(() => {})
-   }
+      if (statusCode === DisconnectReason.loggedOut) {
+        await cleanup('sesión cerrada desde WhatsApp')
+        return
+      }
+
+      if (needsPairing && !state.creds.registered) {
+        await cleanup(
+          `la conexión se cerró durante la vinculación${statusCode ? ` (HTTP ${statusCode})` : ''}`
+        )
+        return
+      }
+
+      setTimeout(() => {
+        start().catch(error => {
+          console.error('[SUBBOT RECONNECT]', error)
+          process.exitCode = 1
+        })
+      }, 4000)
+    }
+  })
+
+  // No esperamos el evento QR. La vinculación por número se solicita
+  // inmediatamente después de crear el socket, igual que en el bot principal.
+  if (needsPairing) {
+    try {
+      const code = await requestDefaultPairingCode(sock)
+
+      upsertSubbot({
+        id,
+        phone,
+        status: 'pairing',
+        pairingCodeAt: Date.now()
+      })
+
+      const entry = getSubbot(id)
+      if (entry?.requestChat) {
+        await emitSubbotEvent({
+          type: 'pairing-code',
+          chat: entry.requestChat,
+          requester: entry.requester,
+          id,
+          phone,
+          code,
+          formattedCode: formatCode(code)
+        })
+      }
+    } catch (error) {
+      console.error('[SUBBOT PAIRING]', error)
+      await cleanup(
+        `falló la generación del código: ${error?.message || error}`
+      )
+      return
+    }
   }
- })
+
+  sock.ev.on('messages.upsert', async ({ messages, type }) => {
+    if (type !== 'notify') return
+
+    for (const msg of messages) {
+      try {
+        if (!msg.message || msg.key.remoteJid === 'status@broadcast') continue
+
+        const chat = msg.key.remoteJid
+        const sender = jidNormalizedUser(
+          msg.key.participant ||
+          msg.key.remoteJidAlt ||
+          msg.key.remoteJid ||
+          ''
+        )
+        const text = extractText(msg.message)
+
+        if (!text.startsWith(config.prefix)) continue
+
+        const [raw, ...commandArgs] = text
+          .slice(config.prefix.length)
+          .trim()
+          .split(/\s+/)
+
+        const command = findCommand(raw)
+        if (!command) continue
+
+        const privateChat = !chat.endsWith('@g.us')
+
+        if (
+          privateChat &&
+          getInstanceMode('subbot', id) === 'groups' &&
+          !privateCommandsAllowed(raw)
+        ) {
+          await sock.sendMessage(chat, {
+            text: '🔒 *Este subbot está configurado en modo Solo grupos.*\nEste comando no está disponible en chats privados.'
+          }, { quoted: msg }).catch(() => {})
+          continue
+        }
+
+        if (chat.endsWith('@g.us')) {
+          const chosen = getGroupPrincipal(chat) || 'principal'
+          if (chosen !== id) continue
+        }
+
+        await command.execute({
+          sock,
+          msg,
+          chat,
+          sender,
+          args: commandArgs,
+          text,
+          permissionLevel: getPermissionLevel(sender),
+          isOwner: isOwner(sender),
+          isSubOwner: isSubOwner(sender),
+          isStaff: isStaff(sender),
+          instanceType: 'subbot',
+          instanceId: id
+        })
+      } catch (error) {
+        await sock.sendMessage(msg.key.remoteJid, {
+          text: `❌ Error: ${error.message}\n\nUsa *.reportar <motivo>* para reportarlo.`
+        }, { quoted: msg }).catch(() => {})
+      }
+    }
+  })
 }
-start().catch(e=>{console.error(e);process.exit(1)})
+
+start().catch(error => {
+  console.error(error)
+  process.exit(1)
+})
