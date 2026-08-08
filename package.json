@@ -1,7 +1,7 @@
 {
   "name": "nero-bot",
-  "version": "1.12.3",
-  "description": "Nero Bot v1.12.3: pairing de subbots estable, eventos atómicos y anti-duplicados",
+  "version": "1.13.0",
+  "description": "Nero Bot v1.13.0: Nero Sales multi-grupo, catálogo interactivo, leads, pagos y server status",
   "type": "module",
   "main": "src/index.js",
   "scripts": {
@@ -21,6 +21,7 @@
     "dotenv": "^16.6.1",
     "sharp": "^0.34.3",
     "node-webpmux": "^3.2.1",
-    "@itsliaaa/baileys": "0.3.18"
+    "@itsliaaa/baileys": "0.3.18",
+    "pdfkit": "^0.16.0"
   }
 }

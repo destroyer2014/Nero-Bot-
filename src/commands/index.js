@@ -23,11 +23,15 @@ import { extraSearchCommands } from './extra-search.js'
 import { extraUtilityCommands } from './extra-utils.js'
 import { animeEvoCommands } from './anime-evo.js'
 import { gachaCommands } from './gacha.js'
+import { salesCommands } from './sales.js'
+import { serverCommand } from './server.js'
 
 const commands = [
   menu,
   ping,
   info,
+  serverCommand,
+  ...salesCommands,
   reportCommand,
   ...modeCommands,
   ...favoriteCommands,
