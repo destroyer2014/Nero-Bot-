@@ -3,7 +3,7 @@ export default {
   subbotBrand: 'NERO',
   creator: 'ArcadiaCorps',
   plugins: '60+',
-  website: 'https://arcadiacorps.online',
+  website: 'https://arcadiacorps.online/web-v2/login.html',
   version: '1.11.0',
   prefix: '.',
   timezone: 'America/Lima',
