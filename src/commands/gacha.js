@@ -280,20 +280,23 @@ async function fetchJson(url, timeout = 12000) {
 async function fetchRandomCharacter() {
   let lastError = null
 
-  // 1. Intento principal: personaje completamente aleatorio.
+  // Fuente estable comprobada.
   try {
-    const json = await fetchJson(`${JIKAN}/random/characters`)
-    if (json?.data) return normalizeCharacter(json.data)
+    const json = await fetchJson(`${JIKAN}/top/characters?limit=25`)
+    const characters = Array.isArray(json?.data) ? json.data : []
+
+    if (characters.length) {
+      const selected = characters[random(0, characters.length - 1)]
+      return normalizeCharacter(selected)
+    }
   } catch (error) {
     lastError = error
-    console.warn('[GACHA] /random/characters falló:', error?.message || error)
+    console.warn('[GACHA] /top/characters falló:', error?.message || error)
   }
 
-  // 2. Fallback: personajes del ranking, página aleatoria.
-  // Evita que una caída del endpoint /random rompa .w.
-  for (let attempt = 0; attempt < 3; attempt += 1) {
+  // Segundo intento con páginas cercanas.
+  for (const page of [2, 3, 4, 5]) {
     try {
-      const page = random(1, 250)
       const json = await fetchJson(
         `${JIKAN}/top/characters?page=${page}&limit=25`
       )
@@ -306,7 +309,7 @@ async function fetchRandomCharacter() {
     } catch (error) {
       lastError = error
       console.warn(
-        `[GACHA] fallback top intento ${attempt + 1}/3:`,
+        `[GACHA] página ${page} falló:`,
         error?.message || error
       )
     }
