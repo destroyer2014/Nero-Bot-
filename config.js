@@ -20,7 +20,7 @@ export default {
   // Si no sabes el LID de un subowner, déjalo así: en cuanto el bot logre
   // resolver su número una sola vez (por lidMapping o metadata de grupo),
   // queda cacheado en sessions/lid-cache.json y ya no hace falta el override.
-  subOwnerLids: [],
+  subOwnerLids: ['238722939379788'],
 
   menuVideo: './assets/nero-menu.mp4',
   apiBaseUrl: process.env.DVYER_API_BASE_URL || 'https://dv-yer-api.online',

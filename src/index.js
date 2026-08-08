@@ -213,11 +213,19 @@ function resolveSenderJid(msg) {
 
 function staticLidOverride(lid) {
   const digits = String(lid).split('@')[0].split(':')[0]
-  const lids = config.ownerLids || []
-  const idx = lids.indexOf(digits)
-  if (idx === -1) return null
-  const phone = config.ownerNumbers?.[idx]
-  return phone ? `${phone}@s.whatsapp.net` : null
+  const mappings = [
+    [config.ownerLids || [], config.ownerNumbers || []],
+    [config.subOwnerLids || [], config.subOwnerNumbers || []]
+  ]
+
+  for (const [lids, numbers] of mappings) {
+    const idx = lids.indexOf(digits)
+    if (idx === -1) continue
+    const phone = numbers[idx]
+    if (phone) return `${phone}@s.whatsapp.net`
+  }
+
+  return null
 }
 
 async function resolveSenderIdentity(sock, msg, chat) {

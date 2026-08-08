@@ -2,6 +2,8 @@ import { jidNormalizedUser } from '@itsliaaa/baileys'
 import config from '../../config.js'
 import { evoGet } from '../lib/api.js'
 import { getGroup, patchGroup } from '../lib/groupStore.js'
+import { sendInteractive, singleSelect } from '../lib/interactive.js'
+import { getSelection, saveSelection } from '../lib/selectionCache.js'
 
 const interactionTypes = [
   'spank', 'undress', 'yuri', 'sixnine', 'anal', 'fuck', 'cummouth',
@@ -228,7 +230,43 @@ export const nsfwMenu = wrap('nsfwmenu', ['menu18', 'adultmenu'], async ctx => {
   await ctx.sock.sendMessage(ctx.chat, { text: body }, { quoted: ctx.msg })
 })
 
-export const pornhubSearch = wrap('pornhubsearch', ['phsearch'], async ctx => {
+function selectableAdultResults(data) {
+  return searchResults(data)
+    .filter(item => {
+      const title = cleanText(item?.title, '')
+      const url = String(item?.url || '').trim()
+      return /^https?:\/\//i.test(url) && !blockedTerms.some(pattern => pattern.test(title))
+    })
+    .slice(0, 10)
+}
+
+async function sendAdultSelection(ctx, { query, provider, cacheKey, pickCommand, results }) {
+  if (!results.length) throw new Error('La API no encontró resultados permitidos para esa búsqueda.')
+  const token = saveSelection(cacheKey, results)
+  const rows = results.map((item, index) => {
+    const details = [
+      item.duration ? cleanText(item.duration) : '',
+      item.resolution ? cleanText(item.resolution).replace(/(\d+p)\1/i, '$1') : '',
+      item.views !== undefined && item.views !== null ? `${formatNumber(item.views)} vistas` : ''
+    ].filter(Boolean).join(' • ')
+    return {
+      header: `Resultado ${index + 1}`,
+      title: cleanText(item.title, 'Sin título').slice(0, 90),
+      description: (details || 'Seleccionar y descargar').slice(0, 100),
+      id: `${config.prefix}${pickCommand} ${token} ${index}`
+    }
+  })
+  const first = results[0]
+  const preview = first?.thumbnail || first?.thumb || first?.image || first?.preview
+  await sendInteractive(ctx.sock, ctx.chat, {
+    title: `${provider} Downloader`,
+    body: `Resultados para: *${query}*\nSelecciona un video y Nero lo descargará automáticamente.`,
+    media: preview ? { image: { url: preview } } : null,
+    buttons: [singleSelect('Ver resultados', [{ title: provider, rows }])]
+  }, ctx.msg)
+}
+
+export const pornhubSearch = wrap('pornhubsearch', ['phsearch', 'ph'], async ctx => {
   requireAdultEnabled(ctx)
   const query = assertAllowedInput(ctx.args.join(' '))
   const data = await evoGet('/nsfw/search/pornhub', { query })
@@ -239,14 +277,42 @@ export const xnxxSearch = wrap('xnxxsearch', ['xnsearch'], async ctx => {
   requireAdultEnabled(ctx)
   const query = assertAllowedInput(ctx.args.join(' '))
   const data = await evoGet('/nsfw/search/xnxx', { query })
-  await ctx.sock.sendMessage(ctx.chat, { text: formatSearchResults('Resultados de XNXX', searchResults(data)) }, { quoted: ctx.msg })
+  await sendAdultSelection(ctx, {
+    query,
+    provider: 'XNXX',
+    cacheKey: 'nsfw-xnxx',
+    pickCommand: 'xnxxpick',
+    results: selectableAdultResults(data)
+  })
 })
 
 export const xvideosSearch = wrap('xvideossearch', ['xvsearch'], async ctx => {
   requireAdultEnabled(ctx)
   const query = assertAllowedInput(ctx.args.join(' '))
   const data = await evoGet('/nsfw/search/xvideos', { query })
-  await ctx.sock.sendMessage(ctx.chat, { text: formatSearchResults('Resultados de XVideos', searchResults(data)) }, { quoted: ctx.msg })
+  await sendAdultSelection(ctx, {
+    query,
+    provider: 'XVideos',
+    cacheKey: 'nsfw-xvideos',
+    pickCommand: 'xvideospick',
+    results: selectableAdultResults(data)
+  })
+})
+
+export const xnxxPick = wrap('xnxxpick', [], async ctx => {
+  requireAdultEnabled(ctx)
+  const list = getSelection(ctx.args[0], 'nsfw-xnxx')
+  const item = list?.[Number(ctx.args[1])]
+  if (!item?.url) throw new Error('La selección venció. Ejecuta .xnxxsearch nuevamente.')
+  await xnxxDownload.execute({ ...ctx, args: [item.url] })
+})
+
+export const xvideosPick = wrap('xvideospick', [], async ctx => {
+  requireAdultEnabled(ctx)
+  const list = getSelection(ctx.args[0], 'nsfw-xvideos')
+  const item = list?.[Number(ctx.args[1])]
+  if (!item?.url) throw new Error('La selección venció. Ejecuta .xvideossearch nuevamente.')
+  await xvideosDownload.execute({ ...ctx, args: [item.url] })
 })
 
 function validateVideoPageUrl(value, allowedHosts) {
@@ -364,6 +430,8 @@ export const nsfwCommands = [
   pornhubSearch,
   xnxxSearch,
   xvideosSearch,
+  xnxxPick,
+  xvideosPick,
   xvideosDownload,
   xnxxDownload,
   rule34Image,

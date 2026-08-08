@@ -149,6 +149,45 @@ export const ytmusicpick={name:'ytmusicpick',aliases:[],async execute(ctx){retur
   await runDownloadJob(ctx,'light','.ytmusic',()=>directMedia(ctx,'/ytmusic/download',{mode:'link',url:item.music_url||musicUrl(item.video_id)},d=>`🎵 *${d.title||item.title}*\n👤 ${item.artist||''}\n💿 ${item.album||''}`))
 })}}
 
+async function downloadAppleMusic(ctx,url){
+  await directMedia(ctx,'/applemusicdl',{url},d=>[
+    `🍎 *${d.track_name||d.title||'Apple Music'}*`,
+    `👤 ${d.artist_name||'No disponible'}`,
+    d.album_name?`💿 ${d.album_name}`:'',
+    d.genre?`🎼 ${d.genre}`:'',
+    d.duration_seconds?`⏱️ ${formatDuration(d.duration_seconds)}`:'',
+    `🎧 ${d.quality||'128K'} • ${d.format||'MP3'}`
+  ].filter(Boolean).join('\n'),{prepareAttempts:3})
+}
+
+export const applemusic={name:'applemusic',aliases:['apple','amusic'],async execute(ctx){return apiTask(ctx,async()=>{
+  const input=queryText(ctx.args);if(!input)throw new Error(usage('applemusic','<nombre o enlace>'))
+  if(isLikelyUrl(input))return runDownloadJob(ctx,'light','.applemusic',()=>downloadAppleMusic(ctx,input))
+  const data=await apiGet('/applemusicsearch',{q:input,limit:12})
+  const list=(data.results||[]).slice(0,12);if(!list.length)throw new Error('No encontré canciones en Apple Music.')
+  const token=saveSelection('applemusic',list)
+  const rows=list.map((r,i)=>({
+    header:r.genre||'Audio',
+    title:`${r.artist_name||'Artista'} — ${r.track_name||'Canción'}`.slice(0,90),
+    description:[r.album_name,formatDuration(r.duration_seconds)].filter(Boolean).join(' • ').slice(0,100),
+    id:`${config.prefix}applemusicpick ${token} ${i}`
+  }))
+  await sendInteractive(ctx.sock,ctx.chat,{
+    title:'Apple Music Downloader',
+    body:`Resultados: *${input}*\nSelecciona una canción.`,
+    media:list[0]?.thumbnail?{image:{url:list[0].thumbnail}}:null,
+    buttons:[singleSelect('Seleccionar',[{title:'Canciones',rows}])]
+  },ctx.msg)
+})}}
+
+export const applemusicpick={name:'applemusicpick',aliases:[],async execute(ctx){return apiTask(ctx,async()=>{
+  const list=getSelection(ctx.args[0],'applemusic');const item=list?.[Number(ctx.args[1])]
+  if(!item)throw new Error('La selección venció. Ejecuta .applemusic nuevamente.')
+  const url=item.song_url||item.apple_music_url
+  if(!url)throw new Error('El resultado elegido no contiene un enlace de Apple Music.')
+  await runDownloadJob(ctx,'light','.applemusic',()=>downloadAppleMusic(ctx,url))
+})}}
+
 async function apkSearch(ctx, mod=false){
   const q=queryText(ctx.args); if(!q) throw new Error(usage(mod?'apkmod':'apk','<nombre>'))
   const endpoint=mod?'/apkmoddl':'/apkdl'; const results=[]
@@ -209,6 +248,8 @@ function simpleLinkCommand(name,aliases,endpoint,paramsBuilder,captionBuilder,fo
 export const facebook=simpleLinkCommand('facebook',['fb'],'/facebook',(url,args)=>({mode:'link',url,quality:args[1]||'auto'}),d=>`🎬 *${d.title||'Facebook Video'}*\n📺 ${d.quality||'Auto'}\n⏱️ ${d.duration||''}`)
 export const instagram=simpleLinkCommand('instagram',['ig'],'/instagram',(url,args)=>({mode:'link',url,pick:args[1]||1,lang:'es'}),d=>`📸 *${d.title||'Instagram'}*\n👤 @${d.username||'usuario'}`)
 export const twitch=simpleLinkCommand('twitch',['twitchdl'],'/twitch/download',url=>({url}),d=>`🎮 *${d.title||'Twitch'}*\n👤 ${d.author||''}\n⏱️ ${formatDuration(d.duration_seconds)||''}`)
+export const reddit=simpleLinkCommand('reddit',['redditdl'],'/reddit/download',url=>({url}),d=>`👽 *${d.title||'Reddit'}*\n🎞️ ${d.type||'media'}`)
+export const bilibili=simpleLinkCommand('bilibili',['bilidl','bili'],'/bilibili/download',url=>({url}),d=>`📺 *${d.title||'Bilibili'}*\n👤 ${d.author||''}\n⏱️ ${formatDuration(d.duration_seconds)||''}`)
 export const mediafire=simpleLinkCommand('mediafire',['mf'],'/mediafire',url=>({mode:'link',url}),d=>`📁 *${d.filename||d.title}*\n📦 ${d.filesize||''}`,true)
 export const mega=simpleLinkCommand('mega',['mg'],'/mega',url=>({mode:'link',url}),d=>`☁️ *${d.filename||d.title}*\n📦 ${d.filesize||formatBytes(d.filesize_bytes)}`,true)
 
@@ -509,4 +550,4 @@ export const queueStatus={name:'cola',aliases:['queue'],async execute(ctx){await
 export const cancelDownload={name:'cancelardescarga',aliases:['cancelardl'],async execute(ctx){const removed=cancelUserJobs(ctx.sender);await ctx.sock.sendMessage(ctx.chat,{text:removed?`✅ Se cancelaron ${removed} descarga(s) tuyas en espera.`:'No tienes descargas esperando en la cola.'},{quoted:ctx.msg})}}
 export const clearQueue={name:'limpiarcola',aliases:['clearqueue'],async execute(ctx){if(!ctx.isStaff)throw new Error('Este comando es solo para owner y subowner.');const removed=clearWaitingQueues();await ctx.sock.sendMessage(ctx.chat,{text:`✅ Cola limpiada. Solicitudes eliminadas: ${removed}.`},{quoted:ctx.msg})}}
 
-export const downloadCommands=[play,playpick,ytmp3,ytmp4,spotify,spotifypick,ytmusic,ytmusicpick,apk,apkpick,apkmod,apkmodpick,facebook,instagram,twitch,threads,universal,pinterest,pinterestSearch,stickerSearch,stickerPack,tiktok,tiktokSearch,tiktokGet,mediafire,mega,terabox,teraboxpick,anime,queueStatus,cancelDownload,clearQueue]
+export const downloadCommands=[play,playpick,ytmp3,ytmp4,spotify,spotifypick,ytmusic,ytmusicpick,applemusic,applemusicpick,apk,apkpick,apkmod,apkmodpick,facebook,instagram,twitch,reddit,bilibili,threads,universal,pinterest,pinterestSearch,stickerSearch,stickerPack,tiktok,tiktokSearch,tiktokGet,mediafire,mega,terabox,teraboxpick,anime,queueStatus,cancelDownload,clearQueue]
