@@ -7,6 +7,163 @@ import {
 } from '../lib/gachaStore.js'
 
 const JIKAN = 'https://api.jikan.moe/v4'
+
+const ANILIST = 'https://graphql.anilist.co'
+
+const ANILIST_CHARACTER_FIELDS = `
+  id
+  name {
+    full
+    native
+    alternative
+  }
+  image {
+    large
+    medium
+  }
+  description(asHtml: false)
+  gender
+  age
+  favourites
+  media(sort: POPULARITY_DESC, perPage: 1) {
+    nodes {
+      title {
+        romaji
+        english
+        native
+      }
+      type
+    }
+  }
+`
+
+async function fetchAniListGraphQL(query, variables = {}, timeout = 15000) {
+  let lastError = null
+
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), timeout)
+
+    try {
+      const response = await fetch(ANILIST, {
+        method: 'POST',
+        signal: controller.signal,
+        headers: {
+          'content-type': 'application/json',
+          accept: 'application/json',
+          'user-agent': 'NeroBot-Gacha/1.12'
+        },
+        body: JSON.stringify({ query, variables })
+      })
+
+      if (response.status === 429) {
+        const retryAfter = Math.max(
+          2,
+          Number(response.headers.get('retry-after') || 3)
+        )
+        lastError = new Error('AniList limitó temporalmente las solicitudes.')
+        await sleep(retryAfter * 1000)
+        continue
+      }
+
+      if (!response.ok) {
+        throw new Error(`AniList HTTP ${response.status}`)
+      }
+
+      const json = await response.json()
+
+      if (Array.isArray(json?.errors) && json.errors.length) {
+        throw new Error(
+          json.errors.map(item => item?.message).filter(Boolean).join('; ') ||
+          'AniList devolvió un error GraphQL.'
+        )
+      }
+
+      return json?.data || {}
+    } catch (error) {
+      lastError = error
+      if (attempt < 3) await sleep(attempt * 1200)
+    } finally {
+      clearTimeout(timer)
+    }
+  }
+
+  throw lastError || new Error('AniList no está disponible.')
+}
+
+function normalizeAniListCharacter(raw = {}) {
+  const media = raw.media?.nodes?.[0]
+  const title = media?.title || {}
+  const series =
+    title.romaji ||
+    title.english ||
+    title.native ||
+    'Serie no registrada'
+
+  const aliases = [
+    ...(Array.isArray(raw.name?.alternative) ? raw.name.alternative : []),
+    raw.name?.native
+  ].filter(Boolean)
+
+  return normalizeCharacter({}, {
+    id: String(raw.id || `anilist-${Date.now()}`),
+    name: raw.name?.full || raw.name?.native || `Personaje ${raw.id || ''}`,
+    series,
+    image: raw.image?.large || raw.image?.medium || '',
+    favorites: Number(raw.favourites || 0),
+    aliases,
+    source: 'AniList'
+  })
+}
+
+async function fetchAniListRandomCharacter() {
+  const query = `
+    query ($page: Int) {
+      Page(page: $page, perPage: 15) {
+        characters {
+          ${ANILIST_CHARACTER_FIELDS}
+        }
+      }
+    }
+  `
+
+  let lastError = null
+
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      const page = random(1, 600)
+      const data = await fetchAniListGraphQL(query, { page })
+      const characters = Array.isArray(data?.Page?.characters)
+        ? data.Page.characters
+        : []
+
+      if (!characters.length) continue
+
+      return normalizeAniListCharacter(
+        characters[random(0, characters.length - 1)]
+      )
+    } catch (error) {
+      lastError = error
+    }
+  }
+
+  throw lastError || new Error('AniList no devolvió personajes.')
+}
+
+async function searchAniListCharacters(search) {
+  const query = `
+    query ($search: String) {
+      Page(page: 1, perPage: 10) {
+        characters(search: $search, sort: FAVOURITES_DESC) {
+          ${ANILIST_CHARACTER_FIELDS}
+        }
+      }
+    }
+  `
+
+  const data = await fetchAniListGraphQL(query, { search })
+  return (data?.Page?.characters || []).map(normalizeAniListCharacter)
+}
 const DEFAULT_GROUP = {
   enabled: true,
   autoSpawn: false,
@@ -278,54 +435,47 @@ async function fetchJson(url, timeout = 12000) {
 }
 
 async function fetchRandomCharacter() {
-  let lastError = null
-
-  // Fuente estable comprobada.
+  // AniList es la fuente remota principal. .w NO llama esta función:
+  // las tiradas normales usan exclusivamente el catálogo persistente.
   try {
-    const json = await fetchJson(`${JIKAN}/top/characters?limit=25`)
-    const characters = Array.isArray(json?.data) ? json.data : []
+    return await fetchAniListRandomCharacter()
+  } catch (anilistError) {
+    console.warn('[GACHA] AniList random:', anilistError?.message || anilistError)
 
-    if (characters.length) {
-      const selected = characters[random(0, characters.length - 1)]
-      return normalizeCharacter(selected)
-    }
-  } catch (error) {
-    lastError = error
-    console.warn('[GACHA] /top/characters falló:', error?.message || error)
-  }
-
-  // Segundo intento con páginas cercanas.
-  for (const page of [2, 3, 4, 5]) {
+    // Jikan queda únicamente como respaldo remoto.
     try {
-      const json = await fetchJson(
-        `${JIKAN}/top/characters?page=${page}&limit=25`
-      )
-
+      const json = await fetchJson(`${JIKAN}/top/characters?limit=25`)
       const characters = Array.isArray(json?.data) ? json.data : []
-      if (!characters.length) continue
-
-      const selected = characters[random(0, characters.length - 1)]
-      return normalizeCharacter(selected)
-    } catch (error) {
-      lastError = error
-      console.warn(
-        `[GACHA] página ${page} falló:`,
-        error?.message || error
-      )
+      if (characters.length) {
+        return normalizeCharacter(
+          characters[random(0, characters.length - 1)]
+        )
+      }
+    } catch (jikanError) {
+      console.warn('[GACHA] Jikan fallback:', jikanError?.message || jikanError)
     }
-  }
 
-  throw new Error(
-    `Las fuentes de personajes están temporalmente fuera de servicio${
-      lastError?.message ? ` (${lastError.message})` : ''
-    }.`
-  )
+    throw new Error(
+      'Las fuentes externas están temporalmente fuera de servicio. ' +
+      'El Gacha seguirá funcionando con el catálogo local.'
+    )
+  }
 }
 
 async function searchCharactersApi(query) {
-  const json = await fetchJson(`${JIKAN}/characters?q=${encodeURIComponent(query)}&limit=10`)
-  return (json?.data || []).map(item => normalizeCharacter(item))
+  try {
+    return await searchAniListCharacters(query)
+  } catch (anilistError) {
+    console.warn('[GACHA] AniList search:', anilistError?.message || anilistError)
+
+    // Compatibilidad de respaldo con Jikan.
+    const json = await fetchJson(
+      `${JIKAN}/characters?q=${encodeURIComponent(query)}&limit=10`
+    )
+    return (json?.data || []).map(item => normalizeCharacter(item))
+  }
 }
+
 
 function catalogMatch(state, query) {
   const q = lower(query)
@@ -490,37 +640,59 @@ function maybeUnlockCosmetics(state, user) {
 
 async function getRollCharacter(state, user) {
   cleanBoosters(user)
+
+  // LOCAL-FIRST: una tirada jamás necesita esperar una API externa.
+  const cached = Object.values(state.catalog || {})
+    .filter(char => char?.id && char?.name)
+
+  if (!cached.length) {
+    throw new Error(
+      'El catálogo local todavía está vacío. ' +
+      'El Owner debe ejecutar: npm run gacha:prefill -- 12'
+    )
+  }
+
   const guarantee6 = user.pity.six >= 149
   const guarantee5 = user.pity.five >= 69
-  const cached = Object.values(state.catalog)
+
+  let pool = cached
+
   if (guarantee6) {
-    const choices = cached.filter(c => c.rarity >= 6)
-    if (choices.length) return choices[random(0, choices.length - 1)]
-  }
-  if (guarantee5) {
-    const choices = cached.filter(c => c.rarity >= 5)
-    if (choices.length) return choices[random(0, choices.length - 1)]
-  }
-  if (cached.length >= 30 && Math.random() < 0.65) {
-    const weighted = cached.filter(c => {
-      const r = Math.random() * 100
-      if (c.rarity === 6) return r < 1
-      if (c.rarity === 5) return r < 4
-      if (c.rarity === 4) return r < 12
-      if (c.rarity === 3) return r < 30
-      if (c.rarity === 2) return r < 65
+    const choices = cached.filter(char => char.rarity >= 6)
+    if (choices.length) pool = choices
+  } else if (guarantee5) {
+    const choices = cached.filter(char => char.rarity >= 5)
+    if (choices.length) pool = choices
+  } else {
+    const weighted = cached.filter(char => {
+      const chance = Math.random() * 100
+      if (char.rarity === 6) return chance < 1
+      if (char.rarity === 5) return chance < 4
+      if (char.rarity === 4) return chance < 12
+      if (char.rarity === 3) return chance < 30
+      if (char.rarity === 2) return chance < 65
       return true
     })
-    const pool = weighted.length ? weighted : cached
-    return pool[random(0, pool.length - 1)]
+    if (weighted.length) pool = weighted
   }
-  let char = await fetchRandomCharacter()
-  if (activeBoost(user, 'luck_potion')) char.rarity = clamp(char.rarity + 1, 1, 6)
+
+  const selected = pool[random(0, pool.length - 1)]
+  const char = {
+    ...selected,
+    aliases: [...(selected.aliases || [])]
+  }
+
+  if (activeBoost(user, 'luck_potion')) {
+    char.rarity = clamp(char.rarity + 1, 1, 6)
+  }
+
   if (guarantee6) char.rarity = 6
   else if (guarantee5) char.rarity = Math.max(5, char.rarity)
+
   char.value = valueFromCharacter(char.rarity, char.favorites)
   return char
 }
+
 
 async function rollHandler(ctx) {
   const snapshot = getGachaState()
@@ -1963,39 +2135,1119 @@ async function gachaCooldownHandler(ctx) {
 
 async function rulesHandler(ctx) {const state=getGachaState(); await reply(ctx,`📜 *Reglas Gacha*\n${groupOf(state,ctx.chat).rules}`)}
 
-const HELP = [
-  ['🎴 Tiradas', '.w', '.claim / .c', '.reroll', '.skip', '.spawn', '.gachacooldown', '.lastspawn'],
-  ['🧍 Personajes', '.character / .char', '.lookup', '.series', '.rarity', '.randomchar', '.compare', '.value', '.ownerof', '.copies', '.gachaid'],
-  ['💞 Colección', '.harem / .collection', '.inventory', '.characters', '.rarities', '.duplicates', '.recent', '.oldest', '.best', '.rarest', '.collectionvalue', '.completion', '.seriescompletion'],
-  ['❤️ Favoritos', '.fav', '.unfav', '.favs', '.favorite', '.setfavorite', '.lock', '.unlock', '.locked'],
-  ['💖 Wishlist', '.wish', '.unwish', '.wishlist', '.wishclear', '.wishmatch', '.wishspawn'],
-  ['🪙 Economía', '.balance / .bal / .wallet', '.daily', '.weekly', '.monthly', '.work', '.gachajob', '.reward', '.claimreward', '.transactions', '.networth', '.pay', '.rich'],
-  ['🎟️ Objetos', '.tickets', '.ticketshop', '.buyticket', '.use', '.items', '.boosters', '.usebooster', '.luck', '.pity', '.pityinfo', '.guaranteed'],
-  ['🤝 Trades', '.trade', '.tradeadd', '.tradecoins', '.traderemove', '.tradeview', '.tradeaccept', '.tradedecline', '.tradecancel', '.trades', '.tradehistory'],
-  ['🎁 Regalos', '.give', '.givecoins', '.gift', '.gifts', '.acceptgift'],
-  ['💵 Venta', '.sell', '.sellall', '.sellduplicates', '.sellpreview', '.sellconfirm', '.sellcancel'],
-  ['🏪 Mercado', '.market', '.marketsearch', '.marketlist', '.marketremove', '.marketbuy', '.mylistings', '.marketrecent', '.marketvalue'],
-  ['🔨 Subastas', '.auction', '.bid', '.auctions', '.myauctions', '.auctioninfo', '.auctioncancel'],
-  ['💞 Afinidad', '.affinity', '.interact', '.feed', '.giftchar', '.date', '.profilechar', '.nicknamechar', '.maxaffinity', '.marry', '.divorce', '.partner', '.marriage'],
-  ['🧬 Mejoras', '.level', '.upgrade', '.evolve', '.ascend', '.xp', '.feedxp', '.stats', '.max', '.materials'],
-  ['⚔️ Equipos/PvE', '.team', '.teamadd', '.teamremove', '.teamset', '.teamclear', '.teampower', '.teams', '.saveteam', '.loadteam', '.battle', '.boss', '.attack', '.dungeon', '.adventure', '.expedition', '.expeditions', '.claimexpedition'],
-  ['🏆 Rankings/Stats', '.topgacha', '.topvalue', '.toprarity', '.topclaims', '.topcoins', '.topcompletion', '.topwishlist', '.topcharacter', '.topseries', '.gachastats', '.claims', '.rolls', '.luckstats', '.bestpull', '.worstluck', '.spent', '.earned', '.tradestats'],
-  ['🏅 Logros', '.achievements', '.achievement', '.claimachievement', '.badges', '.badge'],
-  ['🎊 Eventos', '.gachaevent', '.eventroll', '.eventshop', '.eventpoints', '.eventranking', '.eventmissions', '.eventclaim', '.banner', '.banners', '.bannerinfo', '.redeem', '.codes'],
-  ['👤 Perfil', '.gachaprofile', '.setbio', '.setcard', '.settitle', '.titles', '.setbadge', '.gachaprivacy', '.gachanotify', '.wishnotify', '.tradenotify', '.marketnotify', '.eventnotify'],
-  ['👥 Grupo', '.gacha on|off', '.gachaspawn on|off', '.gachacooldown <seg>', '.claimtime <seg>', '.gachachannel', '.gacharules', '.gacharesetgroup'],
-  ['👑 Owner', '.addcharacter', '.editcharacter', '.delcharacter', '.givechar', '.removechar', '.addcoins', '.removecoins', '.addticket', '.removeticket', '.giveitem', '.removeitem', '.setrarity', '.setvalue', '.createbanner', '.editbanner', '.deletebanner', '.createevent', '.endevent', '.createcode', '.deletecode', '.gachaban', '.gachaunban', '.gachabanned', '.resetusergacha', '.resetgroupgacha', '.gachadbcheck', '.gachabackup', '.gachastatus']
+const HELP_SECTIONS = [
+  {
+    "slug": "tiradas",
+    "title": "🎴 Tiradas",
+    "entries": [
+      {
+        "usage": ".w / .roll / .spawn",
+        "description": "Genera una aparición reclamable usando el catálogo local."
+      },
+      {
+        "usage": ".claim / .c",
+        "description": "Reclama el personaje que está activo en el chat."
+      },
+      {
+        "usage": ".reroll",
+        "description": "Cambia la aparición activa pagando monedas o un Reroll Token."
+      },
+      {
+        "usage": ".skip",
+        "description": "Descarta la aparición actual si eres quien tiró o tienes permisos."
+      },
+      {
+        "usage": ".gachacooldown",
+        "description": "Consulta el cooldown; admins pueden cambiarlo indicando segundos."
+      },
+      {
+        "usage": ".lastspawn",
+        "description": "Muestra el último personaje que apareció en el grupo."
+      }
+    ]
+  },
+  {
+    "slug": "personajes",
+    "title": "🧍 Personajes",
+    "entries": [
+      {
+        "usage": ".character / .char <nombre|id>",
+        "description": "Muestra ficha, imagen, rareza, valor, copias y owners."
+      },
+      {
+        "usage": ".lookup <nombre>",
+        "description": "Busca personajes; importa resultados de AniList al catálogo local."
+      },
+      {
+        "usage": ".series <anime>",
+        "description": "Lista personajes locales pertenecientes a una serie."
+      },
+      {
+        "usage": ".rarity <1-6>",
+        "description": "Lista personajes de una rareza concreta."
+      },
+      {
+        "usage": ".randomchar",
+        "description": "Muestra un personaje aleatorio sin hacerlo reclamable."
+      },
+      {
+        "usage": ".compare <id1> <id2>",
+        "description": "Compara valor y rareza de dos personajes."
+      },
+      {
+        "usage": ".value <personaje>",
+        "description": "Consulta el valor de un personaje."
+      },
+      {
+        "usage": ".ownerof <personaje>",
+        "description": "Muestra quién posee copias de ese personaje."
+      },
+      {
+        "usage": ".copies <personaje>",
+        "description": "Cuenta cuántas copias existen globalmente."
+      },
+      {
+        "usage": ".gachaid <personaje>",
+        "description": "Obtiene el ID interno usado por el Gacha."
+      }
+    ]
+  },
+  {
+    "slug": "coleccion",
+    "title": "💞 Colección",
+    "entries": [
+      {
+        "usage": ".harem / .collection [@user]",
+        "description": "Muestra la colección del usuario."
+      },
+      {
+        "usage": ".inventory",
+        "description": "Resume tu inventario Gacha."
+      },
+      {
+        "usage": ".characters",
+        "description": "Lista las copias que posees."
+      },
+      {
+        "usage": ".rarities",
+        "description": "Resume tu colección por rareza."
+      },
+      {
+        "usage": ".duplicates",
+        "description": "Muestra personajes repetidos."
+      },
+      {
+        "usage": ".recent",
+        "description": "Muestra tus adquisiciones más recientes."
+      },
+      {
+        "usage": ".oldest",
+        "description": "Muestra tus adquisiciones más antiguas."
+      },
+      {
+        "usage": ".best",
+        "description": "Ordena tu colección por valor."
+      },
+      {
+        "usage": ".rarest",
+        "description": "Muestra primero las copias de mayor rareza."
+      },
+      {
+        "usage": ".collectionvalue",
+        "description": "Calcula el valor total de tu colección."
+      },
+      {
+        "usage": ".completion",
+        "description": "Muestra tu porcentaje del catálogo completado."
+      },
+      {
+        "usage": ".seriescompletion <anime>",
+        "description": "Calcula cuánto has completado de una serie."
+      }
+    ]
+  },
+  {
+    "slug": "favoritos",
+    "title": "❤️ Favoritos",
+    "entries": [
+      {
+        "usage": ".fav <copia>",
+        "description": "Añade una copia a favoritos."
+      },
+      {
+        "usage": ".unfav <copia>",
+        "description": "Quita una copia de favoritos."
+      },
+      {
+        "usage": ".favs",
+        "description": "Muestra todas tus copias favoritas."
+      },
+      {
+        "usage": ".favorite",
+        "description": "Muestra tu personaje principal actual."
+      },
+      {
+        "usage": ".setfavorite <copia>",
+        "description": "Define tu personaje principal."
+      },
+      {
+        "usage": ".lock <copia>",
+        "description": "Protege una copia contra ventas o movimientos accidentales."
+      },
+      {
+        "usage": ".unlock <copia>",
+        "description": "Quita la protección."
+      },
+      {
+        "usage": ".locked",
+        "description": "Lista todas las copias protegidas."
+      }
+    ]
+  },
+  {
+    "slug": "wishlist",
+    "title": "💖 Wishlist",
+    "entries": [
+      {
+        "usage": ".wish <personaje>",
+        "description": "Añade un personaje a tu lista de deseos."
+      },
+      {
+        "usage": ".unwish <personaje>",
+        "description": "Elimina un personaje de tu wishlist."
+      },
+      {
+        "usage": ".wishlist [@user]",
+        "description": "Muestra la wishlist."
+      },
+      {
+        "usage": ".wishclear",
+        "description": "Vacía tu lista de deseos."
+      },
+      {
+        "usage": ".wishmatch",
+        "description": "Busca coincidencias entre tus deseos y colecciones."
+      },
+      {
+        "usage": ".wishspawn",
+        "description": "Comprueba la última aparición respecto a tu wishlist."
+      }
+    ]
+  },
+  {
+    "slug": "economia",
+    "title": "🪙 Economía",
+    "entries": [
+      {
+        "usage": ".balance / .bal / .wallet / .networth",
+        "description": "Muestra tus monedas y el valor económico de tu cuenta."
+      },
+      {
+        "usage": ".daily",
+        "description": "Reclama la recompensa diaria."
+      },
+      {
+        "usage": ".weekly",
+        "description": "Reclama la recompensa semanal."
+      },
+      {
+        "usage": ".monthly",
+        "description": "Reclama la recompensa mensual."
+      },
+      {
+        "usage": ".work",
+        "description": "Realiza un trabajo con cooldown para ganar monedas."
+      },
+      {
+        "usage": ".gachajob",
+        "description": "Ejecuta un trabajo Gacha aleatorio."
+      },
+      {
+        "usage": ".reward",
+        "description": "Muestra recompensas pendientes."
+      },
+      {
+        "usage": ".claimreward",
+        "description": "Reclama recompensas pendientes."
+      },
+      {
+        "usage": ".transactions",
+        "description": "Muestra tus movimientos recientes."
+      },
+      {
+        "usage": ".pay @user <cantidad>",
+        "description": "Transfiere monedas virtuales a otro usuario."
+      },
+      {
+        "usage": ".rich",
+        "description": "Muestra el ranking de monedas."
+      }
+    ]
+  },
+  {
+    "slug": "objetos",
+    "title": "🎟️ Objetos y Pity",
+    "entries": [
+      {
+        "usage": ".tickets",
+        "description": "Consulta tus tickets."
+      },
+      {
+        "usage": ".ticketshop",
+        "description": "Muestra la tienda de tickets y objetos."
+      },
+      {
+        "usage": ".buyticket <cantidad>",
+        "description": "Compra tickets usando monedas."
+      },
+      {
+        "usage": ".use / .usebooster <objeto>",
+        "description": "Usa un objeto o booster disponible."
+      },
+      {
+        "usage": ".items",
+        "description": "Muestra tu inventario de objetos."
+      },
+      {
+        "usage": ".boosters",
+        "description": "Muestra boosters y duración restante."
+      },
+      {
+        "usage": ".luck",
+        "description": "Consulta tus mejoras de suerte activas."
+      },
+      {
+        "usage": ".pity",
+        "description": "Muestra el progreso de tus garantizados."
+      },
+      {
+        "usage": ".pityinfo",
+        "description": "Explica cómo funciona el sistema pity."
+      },
+      {
+        "usage": ".guaranteed",
+        "description": "Consulta cuánto falta para el siguiente garantizado."
+      }
+    ]
+  },
+  {
+    "slug": "trades",
+    "title": "🤝 Intercambios",
+    "entries": [
+      {
+        "usage": ".trade @user",
+        "description": "Inicia un intercambio con otro usuario."
+      },
+      {
+        "usage": ".tradeadd <copia>",
+        "description": "Añade una copia a tu oferta."
+      },
+      {
+        "usage": ".tradecoins <cantidad>",
+        "description": "Añade monedas a tu oferta."
+      },
+      {
+        "usage": ".traderemove <copia>",
+        "description": "Retira una copia de la oferta."
+      },
+      {
+        "usage": ".tradeview",
+        "description": "Muestra el intercambio actual."
+      },
+      {
+        "usage": ".tradeaccept",
+        "description": "Acepta el intercambio."
+      },
+      {
+        "usage": ".tradedecline",
+        "description": "Rechaza el intercambio."
+      },
+      {
+        "usage": ".tradecancel",
+        "description": "Cancela tu intercambio."
+      },
+      {
+        "usage": ".trades",
+        "description": "Muestra intercambios pendientes."
+      },
+      {
+        "usage": ".tradehistory",
+        "description": "Muestra historial de intercambios."
+      }
+    ]
+  },
+  {
+    "slug": "regalos",
+    "title": "🎁 Regalos",
+    "entries": [
+      {
+        "usage": ".give <copia> @user",
+        "description": "Regala una copia de personaje."
+      },
+      {
+        "usage": ".givecoins @user <cantidad>",
+        "description": "Regala monedas virtuales."
+      },
+      {
+        "usage": ".gift @user",
+        "description": "Envía una caja/regalo virtual."
+      },
+      {
+        "usage": ".gifts",
+        "description": "Muestra regalos pendientes."
+      },
+      {
+        "usage": ".acceptgift",
+        "description": "Acepta un regalo pendiente."
+      }
+    ]
+  },
+  {
+    "slug": "ventas",
+    "title": "💵 Venta",
+    "entries": [
+      {
+        "usage": ".sell <copia>",
+        "description": "Prepara la venta de una copia al sistema."
+      },
+      {
+        "usage": ".sellpreview <copia>",
+        "description": "Consulta el precio antes de vender."
+      },
+      {
+        "usage": ".sellconfirm",
+        "description": "Confirma la venta preparada."
+      },
+      {
+        "usage": ".sellcancel",
+        "description": "Cancela la venta pendiente."
+      },
+      {
+        "usage": ".sellall <rareza>",
+        "description": "Vende en lote según los criterios del comando."
+      },
+      {
+        "usage": ".sellduplicates",
+        "description": "Vende duplicados no protegidos."
+      }
+    ]
+  },
+  {
+    "slug": "mercado",
+    "title": "🏪 Mercado",
+    "entries": [
+      {
+        "usage": ".market",
+        "description": "Muestra publicaciones activas."
+      },
+      {
+        "usage": ".marketsearch <personaje>",
+        "description": "Busca un personaje en el mercado."
+      },
+      {
+        "usage": ".marketlist <copia> <precio>",
+        "description": "Publica una copia por monedas virtuales."
+      },
+      {
+        "usage": ".marketremove <id>",
+        "description": "Retira una publicación propia."
+      },
+      {
+        "usage": ".marketbuy <id>",
+        "description": "Compra una publicación."
+      },
+      {
+        "usage": ".mylistings",
+        "description": "Muestra tus publicaciones."
+      },
+      {
+        "usage": ".marketrecent",
+        "description": "Muestra ventas recientes."
+      },
+      {
+        "usage": ".marketvalue <personaje>",
+        "description": "Consulta referencias de precio del mercado."
+      }
+    ]
+  },
+  {
+    "slug": "subastas",
+    "title": "🔨 Subastas",
+    "entries": [
+      {
+        "usage": ".auction <copia> <precio>",
+        "description": "Crea una subasta con monedas virtuales."
+      },
+      {
+        "usage": ".bid <id> <cantidad>",
+        "description": "Realiza una oferta."
+      },
+      {
+        "usage": ".auctions",
+        "description": "Muestra subastas activas."
+      },
+      {
+        "usage": ".myauctions",
+        "description": "Muestra tus subastas."
+      },
+      {
+        "usage": ".auctioninfo <id>",
+        "description": "Muestra detalles y ofertas."
+      },
+      {
+        "usage": ".auctioncancel <id>",
+        "description": "Cancela una subasta cuando las reglas lo permitan."
+      }
+    ]
+  },
+  {
+    "slug": "afinidad",
+    "title": "💞 Afinidad y pareja",
+    "entries": [
+      {
+        "usage": ".affinity <copia>",
+        "description": "Consulta la afinidad de una copia."
+      },
+      {
+        "usage": ".interact <copia>",
+        "description": "Interactúa para aumentar afinidad."
+      },
+      {
+        "usage": ".feed <copia>",
+        "description": "Usa recursos para aumentar afinidad."
+      },
+      {
+        "usage": ".giftchar <copia>",
+        "description": "Entrega un objeto al personaje."
+      },
+      {
+        "usage": ".date <copia>",
+        "description": "Realiza una actividad de afinidad."
+      },
+      {
+        "usage": ".profilechar <copia>",
+        "description": "Muestra el perfil ampliado de una copia."
+      },
+      {
+        "usage": ".nicknamechar <copia> <apodo>",
+        "description": "Asigna un apodo."
+      },
+      {
+        "usage": ".maxaffinity",
+        "description": "Muestra tus personajes con mayor afinidad."
+      },
+      {
+        "usage": ".marry <copia>",
+        "description": "Selecciona una copia como pareja."
+      },
+      {
+        "usage": ".divorce",
+        "description": "Elimina la pareja actual."
+      },
+      {
+        "usage": ".partner / .marriage",
+        "description": "Muestra información de tu pareja Gacha."
+      }
+    ]
+  },
+  {
+    "slug": "mejoras",
+    "title": "🧬 Mejoras",
+    "entries": [
+      {
+        "usage": ".level / .xp <copia>",
+        "description": "Consulta nivel y experiencia."
+      },
+      {
+        "usage": ".upgrade <copia>",
+        "description": "Mejora el nivel usando recursos."
+      },
+      {
+        "usage": ".evolve <copia>",
+        "description": "Evoluciona una copia cuando cumple requisitos."
+      },
+      {
+        "usage": ".ascend <copia>",
+        "description": "Realiza una mejora avanzada."
+      },
+      {
+        "usage": ".feedxp <copia> <material>",
+        "description": "Usa materiales para añadir experiencia."
+      },
+      {
+        "usage": ".stats <copia>",
+        "description": "Muestra estadísticas de combate."
+      },
+      {
+        "usage": ".max <copia>",
+        "description": "Aplica mejoras disponibles hasta el límite permitido."
+      },
+      {
+        "usage": ".materials",
+        "description": "Muestra tus materiales de mejora."
+      }
+    ]
+  },
+  {
+    "slug": "combate",
+    "title": "⚔️ Equipos y PvE",
+    "entries": [
+      {
+        "usage": ".team",
+        "description": "Muestra tu equipo activo."
+      },
+      {
+        "usage": ".teamadd <copia>",
+        "description": "Añade una copia al equipo."
+      },
+      {
+        "usage": ".teamremove <copia>",
+        "description": "Retira una copia."
+      },
+      {
+        "usage": ".teamset <posición> <copia>",
+        "description": "Coloca una copia en una posición."
+      },
+      {
+        "usage": ".teamclear",
+        "description": "Vacía el equipo."
+      },
+      {
+        "usage": ".teampower",
+        "description": "Calcula el poder total."
+      },
+      {
+        "usage": ".teams",
+        "description": "Muestra equipos guardados."
+      },
+      {
+        "usage": ".saveteam <nombre>",
+        "description": "Guarda la formación actual."
+      },
+      {
+        "usage": ".loadteam <nombre>",
+        "description": "Carga una formación."
+      },
+      {
+        "usage": ".battle",
+        "description": "Inicia un combate PvE."
+      },
+      {
+        "usage": ".boss",
+        "description": "Muestra el boss actual."
+      },
+      {
+        "usage": ".attack",
+        "description": "Ataca al boss."
+      },
+      {
+        "usage": ".dungeon",
+        "description": "Inicia una mazmorra."
+      },
+      {
+        "usage": ".adventure",
+        "description": "Realiza una aventura."
+      },
+      {
+        "usage": ".expedition <copia>",
+        "description": "Envía personajes a una expedición."
+      },
+      {
+        "usage": ".expeditions",
+        "description": "Consulta expediciones activas."
+      },
+      {
+        "usage": ".claimexpedition",
+        "description": "Reclama recompensas de expediciones terminadas."
+      }
+    ]
+  },
+  {
+    "slug": "rankings",
+    "title": "🏆 Rankings y estadísticas",
+    "entries": [
+      {
+        "usage": ".topgacha",
+        "description": "Ranking general del Gacha."
+      },
+      {
+        "usage": ".topvalue",
+        "description": "Ranking por valor de colección."
+      },
+      {
+        "usage": ".toprarity",
+        "description": "Ranking de rarezas."
+      },
+      {
+        "usage": ".topclaims",
+        "description": "Ranking por cantidad de claims."
+      },
+      {
+        "usage": ".topcoins",
+        "description": "Ranking de monedas."
+      },
+      {
+        "usage": ".topcompletion",
+        "description": "Ranking por catálogo completado."
+      },
+      {
+        "usage": ".topwishlist",
+        "description": "Personajes más deseados."
+      },
+      {
+        "usage": ".topcharacter",
+        "description": "Personajes destacados globalmente."
+      },
+      {
+        "usage": ".topseries <anime>",
+        "description": "Ranking relacionado con una serie."
+      },
+      {
+        "usage": ".gachastats [@user]",
+        "description": "Muestra estadísticas completas."
+      },
+      {
+        "usage": ".claims",
+        "description": "Muestra tus claims totales."
+      },
+      {
+        "usage": ".rolls",
+        "description": "Muestra tus tiradas totales."
+      },
+      {
+        "usage": ".luckstats",
+        "description": "Resume tu suerte por rarezas."
+      },
+      {
+        "usage": ".bestpull",
+        "description": "Muestra tu mejor obtención."
+      },
+      {
+        "usage": ".worstluck",
+        "description": "Muestra tu peor racha."
+      },
+      {
+        "usage": ".spent",
+        "description": "Muestra monedas gastadas."
+      },
+      {
+        "usage": ".earned",
+        "description": "Muestra monedas obtenidas."
+      },
+      {
+        "usage": ".tradestats",
+        "description": "Muestra estadísticas de intercambios."
+      }
+    ]
+  },
+  {
+    "slug": "logros",
+    "title": "🏅 Logros",
+    "entries": [
+      {
+        "usage": ".achievements",
+        "description": "Muestra logros y progreso."
+      },
+      {
+        "usage": ".achievement <id>",
+        "description": "Muestra detalles de un logro."
+      },
+      {
+        "usage": ".claimachievement <id>",
+        "description": "Reclama la recompensa de un logro."
+      },
+      {
+        "usage": ".badges",
+        "description": "Muestra badges desbloqueados."
+      },
+      {
+        "usage": ".badge <badge>",
+        "description": "Selecciona un badge activo."
+      }
+    ]
+  },
+  {
+    "slug": "eventos",
+    "title": "🎊 Eventos y banners",
+    "entries": [
+      {
+        "usage": ".gachaevent",
+        "description": "Muestra el evento activo."
+      },
+      {
+        "usage": ".eventroll",
+        "description": "Realiza una tirada del evento."
+      },
+      {
+        "usage": ".eventshop",
+        "description": "Muestra la tienda del evento."
+      },
+      {
+        "usage": ".eventpoints",
+        "description": "Consulta puntos del evento."
+      },
+      {
+        "usage": ".eventranking",
+        "description": "Muestra el ranking del evento."
+      },
+      {
+        "usage": ".eventmissions",
+        "description": "Muestra misiones del evento."
+      },
+      {
+        "usage": ".eventclaim",
+        "description": "Reclama recompensas de progreso."
+      },
+      {
+        "usage": ".banner <id>",
+        "description": "Muestra información del banner indicado."
+      },
+      {
+        "usage": ".banners",
+        "description": "Lista banners disponibles."
+      },
+      {
+        "usage": ".bannerinfo <id>",
+        "description": "Muestra detalles de un banner."
+      },
+      {
+        "usage": ".redeem <código>",
+        "description": "Canjea un código promocional."
+      },
+      {
+        "usage": ".codes",
+        "description": "Lista códigos públicos activos."
+      }
+    ]
+  },
+  {
+    "slug": "perfil",
+    "title": "👤 Perfil y notificaciones",
+    "entries": [
+      {
+        "usage": ".gachaprofile [@user]",
+        "description": "Muestra un perfil Gacha."
+      },
+      {
+        "usage": ".setbio <texto>",
+        "description": "Cambia tu biografía Gacha."
+      },
+      {
+        "usage": ".setcard <copia>",
+        "description": "Elige la carta visible en tu perfil."
+      },
+      {
+        "usage": ".settitle <título>",
+        "description": "Selecciona un título desbloqueado."
+      },
+      {
+        "usage": ".titles",
+        "description": "Muestra títulos disponibles."
+      },
+      {
+        "usage": ".setbadge <badge>",
+        "description": "Selecciona un badge desde el perfil."
+      },
+      {
+        "usage": ".gachaprivacy public|private",
+        "description": "Cambia la privacidad del perfil."
+      },
+      {
+        "usage": ".gachanotify on|off",
+        "description": "Activa o desactiva notificaciones Gacha."
+      },
+      {
+        "usage": ".wishnotify on|off",
+        "description": "Controla alertas de wishlist."
+      },
+      {
+        "usage": ".tradenotify on|off",
+        "description": "Controla alertas de intercambios."
+      },
+      {
+        "usage": ".marketnotify on|off",
+        "description": "Controla alertas del mercado."
+      },
+      {
+        "usage": ".eventnotify on|off",
+        "description": "Controla alertas de eventos."
+      }
+    ]
+  },
+  {
+    "slug": "grupo",
+    "title": "👥 Configuración de grupo",
+    "entries": [
+      {
+        "usage": ".gacha on|off",
+        "description": "Activa o desactiva el Gacha en el grupo."
+      },
+      {
+        "usage": ".gachaspawn on|off",
+        "description": "Activa apariciones automáticas."
+      },
+      {
+        "usage": ".gachacooldown [segundos]",
+        "description": "Consulta o cambia el cooldown del grupo."
+      },
+      {
+        "usage": ".claimtime <segundos>",
+        "description": "Configura cuánto dura una aparición."
+      },
+      {
+        "usage": ".gachachannel",
+        "description": "Marca el chat actual como canal Gacha."
+      },
+      {
+        "usage": ".gacharules",
+        "description": "Muestra las reglas configuradas."
+      },
+      {
+        "usage": ".gacharesetgroup",
+        "description": "Restablece la configuración del grupo."
+      },
+      {
+        "usage": ".gachainfo [categoría|all]",
+        "description": "Abre esta ayuda explicativa."
+      }
+    ]
+  },
+  {
+    "slug": "owner",
+    "title": "👑 Owner",
+    "entries": [
+      {
+        "usage": ".addcharacter",
+        "description": "Añade manualmente un personaje al catálogo."
+      },
+      {
+        "usage": ".editcharacter",
+        "description": "Edita campos de un personaje."
+      },
+      {
+        "usage": ".delcharacter",
+        "description": "Elimina un personaje del catálogo."
+      },
+      {
+        "usage": ".givechar",
+        "description": "Entrega una copia a un usuario."
+      },
+      {
+        "usage": ".removechar",
+        "description": "Retira una copia a un usuario."
+      },
+      {
+        "usage": ".addcoins",
+        "description": "Añade monedas a un usuario."
+      },
+      {
+        "usage": ".removecoins",
+        "description": "Retira monedas."
+      },
+      {
+        "usage": ".addticket",
+        "description": "Añade tickets."
+      },
+      {
+        "usage": ".removeticket",
+        "description": "Retira tickets."
+      },
+      {
+        "usage": ".giveitem",
+        "description": "Entrega objetos."
+      },
+      {
+        "usage": ".removeitem",
+        "description": "Retira objetos."
+      },
+      {
+        "usage": ".setrarity",
+        "description": "Cambia la rareza de un personaje."
+      },
+      {
+        "usage": ".setvalue",
+        "description": "Cambia su valor."
+      },
+      {
+        "usage": ".createbanner",
+        "description": "Crea un banner."
+      },
+      {
+        "usage": ".editbanner",
+        "description": "Edita un banner."
+      },
+      {
+        "usage": ".deletebanner",
+        "description": "Elimina un banner."
+      },
+      {
+        "usage": ".createevent",
+        "description": "Crea y activa un evento."
+      },
+      {
+        "usage": ".endevent",
+        "description": "Finaliza un evento."
+      },
+      {
+        "usage": ".createcode",
+        "description": "Crea un código promocional."
+      },
+      {
+        "usage": ".deletecode",
+        "description": "Elimina un código."
+      },
+      {
+        "usage": ".gachaban",
+        "description": "Bloquea a un usuario del Gacha."
+      },
+      {
+        "usage": ".gachaunban",
+        "description": "Quita un bloqueo."
+      },
+      {
+        "usage": ".gachabanned",
+        "description": "Lista usuarios bloqueados."
+      },
+      {
+        "usage": ".resetusergacha",
+        "description": "Restablece los datos Gacha de un usuario."
+      },
+      {
+        "usage": ".resetgroupgacha",
+        "description": "Restablece los datos Gacha del grupo."
+      },
+      {
+        "usage": ".gachadbcheck",
+        "description": "Comprueba la estructura de la base Gacha."
+      },
+      {
+        "usage": ".gachabackup",
+        "description": "Crea un backup del estado."
+      },
+      {
+        "usage": ".gachastatus",
+        "description": "Muestra el estado global del sistema."
+      }
+    ]
+  }
 ]
 
-async function gachaInfoHandler(ctx) {
-  const p = prefixOf(ctx)
-  const lines = HELP.flatMap(([title, ...cmds]) => [
-    title,
-    ...cmds.map(c => `• ${c.replace(/\./g, p)}`),
-    ''
-  ])
-  await reply(ctx, ['🎴 *NERO GACHA — MEGA SISTEMA*', '', `${p}w mezcla todos los personajes: no hay waifu/husbando separados.`, '', ...lines].join('\n'))
+const HELP_ALIASES = {
+  tirada: 'tiradas',
+  rolls: 'tiradas',
+  personajes: 'personajes',
+  personaje: 'personajes',
+  coleccion: 'coleccion',
+  colección: 'coleccion',
+  harem: 'coleccion',
+  favoritos: 'favoritos',
+  favorito: 'favoritos',
+  deseos: 'wishlist',
+  economia: 'economia',
+  economía: 'economia',
+  monedas: 'economia',
+  objetos: 'objetos',
+  pity: 'objetos',
+  trade: 'trades',
+  trades: 'trades',
+  intercambio: 'trades',
+  regalos: 'regalos',
+  venta: 'ventas',
+  ventas: 'ventas',
+  market: 'mercado',
+  mercado: 'mercado',
+  subasta: 'subastas',
+  subastas: 'subastas',
+  afinidad: 'afinidad',
+  pareja: 'afinidad',
+  mejoras: 'mejoras',
+  combate: 'combate',
+  pve: 'combate',
+  rankings: 'rankings',
+  stats: 'rankings',
+  logros: 'logros',
+  eventos: 'eventos',
+  banners: 'eventos',
+  perfil: 'perfil',
+  grupo: 'grupo',
+  owner: 'owner'
 }
+
+function helpPrefixText(value, prefix) {
+  return String(value).replace(/(^|\s)\./g, `$1${prefix}`)
+}
+
+function renderHelpSection(section, prefix) {
+  return [
+    `*${section.title}*`,
+    '',
+    ...section.entries.flatMap(entry => [
+      `✦ *${helpPrefixText(entry.usage, prefix)}*`,
+      `└ ${entry.description}`,
+      ''
+    ])
+  ].join('\n').trim()
+}
+
+async function sendHelpChunks(ctx, chunks) {
+  for (let i = 0; i < chunks.length; i += 1) {
+    await reply(
+      ctx,
+      i === 0 ? chunks[i] : `🎴 *NERO GACHA — continuación*\n\n${chunks[i]}`
+    )
+  }
+}
+
+async function gachaInfoHandler(ctx) {
+  const prefix = prefixOf(ctx)
+  const requested = lower(argsWithoutMentions(ctx)[0] || '')
+
+  if (!requested) {
+    const index = HELP_SECTIONS
+      .filter(section => section.slug !== 'owner' || ctx.isOwner)
+      .map(section => `• *${section.slug}* — ${section.title.replace(/^[^\s]+\s*/, '')}`)
+      .join('\n')
+
+    await reply(ctx, [
+      '🎴 *NERO GACHA — GUÍA DE COMANDOS*',
+      '',
+      `${prefix}w mezcla todos los personajes; no existen waifu/husbando separados.`,
+      'Las tiradas usan el catálogo local. AniList se usa para ampliar y buscar personajes.',
+      '',
+      '📚 *Categorías*',
+      index,
+      '',
+      `Usa *${prefix}gachainfo <categoría>* para ver comandos y descripciones.`,
+      `Ejemplo: *${prefix}gachainfo tiradas*`,
+      `Usa *${prefix}gachainfo all* para recibir la guía completa por partes.`
+    ].join('\n'))
+    return
+  }
+
+  if (requested === 'all' || requested === 'todo' || requested === 'todos') {
+    const allowed = HELP_SECTIONS.filter(
+      section => section.slug !== 'owner' || ctx.isOwner
+    )
+    const chunks = allowed.map(section => renderHelpSection(section, prefix))
+    await sendHelpChunks(ctx, chunks)
+    return
+  }
+
+  const slug = HELP_ALIASES[requested] || requested
+  const section = HELP_SECTIONS.find(item => item.slug === slug)
+
+  if (!section || (section.slug === 'owner' && !ctx.isOwner)) {
+    throw new Error(
+      `Categoría no encontrada. Usa ${prefix}gachainfo para ver las disponibles.`
+    )
+  }
+
+  await reply(
+    ctx,
+    `🎴 *NERO GACHA — ${section.title}*\n\n${renderHelpSection(section, prefix)}`
+  )
+}
+
 
 async function ownerCharacterHandler(ctx, mode) {
   ownerOnly(ctx)
@@ -2080,6 +3332,24 @@ async function backupHandler(ctx) {ownerOnly(ctx); const file=backupGachaState('
 async function statusHandler(ctx) {ownerOnly(ctx); const state=getGachaState(); await reply(ctx,`🎴 *Nero Gacha Status*\nRolls: ${state.global.rolls}\nClaims: ${state.global.claims}\nUsuarios: ${Object.keys(state.users).length}\nCatálogo: ${Object.keys(state.catalog).length}\nSpawns activos: ${Object.keys(state.activeSpawns).length}\nBoss: ${state.boss?.name||'no inicializado'}`)}
 
 
+async function getAutoSpawnCharacter() {
+  const state = getGachaState()
+  const cached = Object.values(state.catalog || {})
+    .filter(char => char?.id && char?.name)
+
+  if (cached.length) {
+    return cached[random(0, cached.length - 1)]
+  }
+
+  // Solo durante el bootstrap, si el catálogo está vacío.
+  const remote = await fetchRandomCharacter()
+  withGachaState(current => {
+    current.catalog[remote.id] = normalizeCharacter(remote)
+  })
+  return remote
+}
+
+
 let gachaSchedulerTimer = null
 let gachaSchedulerBusy = false
 
@@ -2112,7 +3382,7 @@ export function startGachaScheduler(sock) {
         if (!claimed) continue
 
         try {
-          const char = await fetchRandomCharacter()
+          const char = await getAutoSpawnCharacter()
           const saved = withGachaState(state => {
             const group = groupOf(state, chat)
             if (!group.enabled || !group.autoSpawn || state.activeSpawns[chat]) return null

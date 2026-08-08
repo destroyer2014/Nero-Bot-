@@ -1,14 +1,15 @@
 {
   "name": "nero-bot",
-  "version": "1.11.0",
-  "description": "Nero Bot v1.11.0: mega sistema Gacha con personajes, economía, colección, mercado, eventos y PvE",
+  "version": "1.12.0",
+  "description": "Nero Bot v1.12.0: Gacha local-first con AniList, ayuda descriptiva y catálogo persistente",
   "type": "module",
   "main": "src/index.js",
   "scripts": {
     "start": "node src/index.js",
     "dev": "node --watch src/index.js",
     "check": "node --check src/index.js && node --check src/subbot-worker.js && find src/commands src/lib -name \"*.js\" -print0 | xargs -0 -n1 node --check",
-    "subbot:config": "node scripts/subbot-config.js"
+    "subbot:config": "node scripts/subbot-config.js",
+    "gacha:prefill": "node scripts/gacha-prefill-anilist.js"
   },
   "engines": {
     "node": ">=20"
