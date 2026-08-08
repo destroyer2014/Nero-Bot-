@@ -100,7 +100,9 @@ export function normalizeSubbotConfig(value = {}, fallback = {}) {
     disabledCommands: cleanCommands(source.disabledCommands),
     packName: cleanText(source.packName, 50) || defaults.packName,
     packAuthor: 'ArcadiaCorps',
-    applyProfile: Boolean(source.applyProfile),
+    // La identidad configurada desde ArcadiaCorps pertenece al Sub-Bot lógico.
+    // Nunca debe modificar el nombre, estado o foto del WhatsApp vinculado.
+    applyProfile: false,
     updatedAt: Number(source.updatedAt) || Date.now()
   }
 }
