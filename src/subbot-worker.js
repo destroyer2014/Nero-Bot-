@@ -467,6 +467,18 @@ async function start() {
     try {
       const code = await requestDefaultPairingCode(sock)
 
+      // Compatibilidad con ArcadiaCorps Web:
+      // la API /pairing-code lee esta marca desde PM2.
+      const webPairingCode = String(code || '')
+        .replace(/[^A-Z0-9]/gi, '')
+        .toUpperCase();
+
+      if (!/^[A-Z0-9]{8}$/.test(webPairingCode)) {
+        throw new Error('El código de vinculación recibido no tiene el formato esperado.');
+      }
+
+      console.log(`[SUBBOT_PAIRING_CODE] ${id} ${webPairingCode}`)
+
       upsertSubbot({
         id,
         phone,
