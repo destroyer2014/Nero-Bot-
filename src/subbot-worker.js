@@ -53,6 +53,33 @@ const clean = value => String(value || '').replace(/\D/g, '')
 const formatCode = code => code?.match(/.{1,4}/g)?.join('-') || code
 const wait = ms => new Promise(resolve => setTimeout(resolve, ms))
 
+const WHATSAPP_PROFILE_NAME_MAX = 25
+const PROFILE_BRAND_SUFFIX = ' • ArcadiaCorps'
+const FULL_BRAND_CREDIT = 'Made With © ArcadiaCorps'
+
+function profileBaseName(value = '') {
+  return String(value || '')
+    .replace(/\s*\|\s*Made\s+With\s+©\s*ArcadiaCorps\s*$/i, '')
+    .replace(/\s*[•·]\s*ArcadiaCorps\s*$/i, '')
+    .trim() || 'Nero'
+}
+
+function whatsappProfileName(value = '') {
+  const base = profileBaseName(value)
+  const allowed = Math.max(
+    1,
+    WHATSAPP_PROFILE_NAME_MAX - PROFILE_BRAND_SUFFIX.length
+  )
+  return `${base.slice(0, allowed).trim()}${PROFILE_BRAND_SUFFIX}`
+    .slice(0, WHATSAPP_PROFILE_NAME_MAX)
+}
+
+function whatsappProfileStatus(value = '') {
+  const custom = String(value || '').trim()
+  return `${FULL_BRAND_CREDIT}${custom ? ` • ${custom}` : ''}`
+    .slice(0, 139)
+}
+
 let cleaningUp = false
 
 let pairingPauseHandled = false
@@ -185,7 +212,7 @@ async function applyWhatsAppProfile(sock, previous, next) {
       next.botName &&
       typeof sock.updateProfileName === 'function'
     ) {
-      await sock.updateProfileName(next.botName)
+      await sock.updateProfileName(whatsappProfileName(next.botName))
       result.nameApplied = true
     }
 
@@ -193,7 +220,7 @@ async function applyWhatsAppProfile(sock, previous, next) {
       changedStatus &&
       typeof sock.updateProfileStatus === 'function'
     ) {
-      await sock.updateProfileStatus(next.statusText || '')
+      await sock.updateProfileStatus(whatsappProfileStatus(next.statusText))
       result.statusApplied = true
     }
 

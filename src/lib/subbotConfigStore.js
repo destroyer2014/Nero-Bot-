@@ -5,6 +5,9 @@ const root = path.resolve('runtime', 'subbot-configs')
 const waitBuffer = new Int32Array(new SharedArrayBuffer(4))
 const MAX_LOCK_AGE_MS = 30_000
 
+export const SUBBOT_BRAND_CREDIT = 'Made With © ArcadiaCorps'
+export const SUBBOT_BRAND_SUFFIX = ` | ${SUBBOT_BRAND_CREDIT}`
+
 const defaults = Object.freeze({
   botName: 'Nero Bot',
   prefix: '.',
@@ -64,10 +67,27 @@ function cleanAvatarUrl(value) {
   return parsed.toString()
 }
 
+export function stripSubbotBrand(value = '') {
+  return String(value || '')
+    .replace(/\s*\|\s*Made\s+With\s+©\s*ArcadiaCorps\s*$/i, '')
+    .replace(/\s*[•·]\s*ArcadiaCorps\s*$/i, '')
+    .trim()
+}
+
+export function subbotBaseName(value = '') {
+  return cleanText(stripSubbotBrand(value), 40) || defaults.botName
+}
+
+export function brandedSubbotName(value = '') {
+  return `${subbotBaseName(value)}${SUBBOT_BRAND_SUFFIX}`
+}
+
 export function normalizeSubbotConfig(value = {}, fallback = {}) {
   const source = { ...defaults, ...fallback, ...(value || {}) }
   return {
-    botName: cleanText(source.botName, 40) || defaults.botName,
+    // El crédito se reconstruye aquí. Aunque una petición externa intente
+    // quitarlo, el archivo runtime vuelve a quedar marcado por ArcadiaCorps.
+    botName: brandedSubbotName(source.botName),
     prefix: cleanPrefix(source.prefix || defaults.prefix),
     statusText: cleanText(source.statusText, 139),
     avatarUrl: cleanAvatarUrl(source.avatarUrl),
@@ -79,7 +99,7 @@ export function normalizeSubbotConfig(value = {}, fallback = {}) {
     goodbyeText: cleanText(source.goodbyeText, 1000) || defaults.goodbyeText,
     disabledCommands: cleanCommands(source.disabledCommands),
     packName: cleanText(source.packName, 50) || defaults.packName,
-    packAuthor: cleanText(source.packAuthor, 50) || defaults.packAuthor,
+    packAuthor: 'ArcadiaCorps',
     applyProfile: Boolean(source.applyProfile),
     updatedAt: Number(source.updatedAt) || Date.now()
   }

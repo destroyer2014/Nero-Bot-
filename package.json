@@ -1,7 +1,7 @@
 {
   "name": "nero-bot",
-  "version": "1.13.1",
-  "description": "Nero Bot v1.13.1: subbots autónomos en grupos, routing automático y join con errores claros",
+  "version": "1.13.2",
+  "description": "Nero Bot v1.13.2: personalización web de subbots con branding ArcadiaCorps protegido",
   "type": "module",
   "main": "src/index.js",
   "scripts": {
