@@ -108,13 +108,19 @@ function normalizeAniListCharacter(raw = {}) {
   return normalizeCharacter({}, {
     id: String(raw.id || `anilist-${Date.now()}`),
     name: raw.name?.full || raw.name?.native || `Personaje ${raw.id || ''}`,
+    nativeName: raw.name?.native || '',
     series,
+    mediaType: media?.type || '',
     image: raw.image?.large || raw.image?.medium || '',
     favorites: Number(raw.favourites || 0),
+    gender: raw.gender || '',
+    age: raw.age ?? '',
+    description: raw.description || '',
     aliases,
     source: 'AniList'
   })
 }
+
 
 async function fetchAniListRandomCharacter() {
   const query = `
@@ -398,26 +404,91 @@ function valueFromCharacter(rarity, favorites = 0) {
 function normalizeCharacter(raw = {}, forced = {}) {
   const id = String(forced.id || raw.mal_id || raw.id || `custom-${Date.now()}`)
   const favorites = Number(forced.favorites ?? raw.favorites ?? 0) || 0
-  const rarity = clamp(Number(forced.rarity || raw.rarity || rarityFromFavorites(favorites)), 1, 6)
+  const rarity = clamp(
+    Number(forced.rarity || raw.rarity || rarityFromFavorites(favorites)),
+    1,
+    6
+  )
   const anime = raw.anime || raw.animeography || []
   const series = forced.series || raw.series ||
-    anime?.[0]?.anime?.title || anime?.[0]?.title || anime?.[0]?.name || 'Serie no registrada'
-  const image = forced.image || raw.image || raw.images?.jpg?.large_image_url || raw.images?.jpg?.image_url || raw.images?.webp?.large_image_url || ''
+    anime?.[0]?.anime?.title ||
+    anime?.[0]?.title ||
+    anime?.[0]?.name ||
+    'Serie no registrada'
+  const image =
+    forced.image ||
+    raw.image ||
+    raw.images?.jpg?.large_image_url ||
+    raw.images?.jpg?.image_url ||
+    raw.images?.webp?.large_image_url ||
+    ''
+
+  const nativeName = clean(
+    forced.nativeName ??
+    raw.nativeName ??
+    raw.nameNative ??
+    ''
+  )
+
+  const gender = clean(
+    forced.gender ??
+    raw.gender ??
+    ''
+  )
+
+  const age = clean(
+    forced.age ??
+    raw.age ??
+    ''
+  )
+
+  const mediaType = clean(
+    forced.mediaType ??
+    raw.mediaType ??
+    raw.type ??
+    ''
+  )
+
+  const description = clean(
+    forced.description ??
+    raw.description ??
+    ''
+  )
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<[^>]+>/g, '')
+    .replace(/\n{3,}/g, '\n\n')
+    .slice(0, 1200)
+
   return {
     id,
     name: clean(forced.name || raw.name || `Personaje ${id}`),
+    nativeName,
     series: clean(series),
+    mediaType,
     image: clean(image),
     favorites,
+    gender,
+    age,
+    description,
     rarity,
-    value: Math.max(1, Number(forced.value || raw.value || valueFromCharacter(rarity, favorites))),
-    aliases: Array.isArray(forced.aliases || raw.nicknames) ? [...(forced.aliases || raw.nicknames)] : [],
+    value: Math.max(
+      1,
+      Number(
+        forced.value ||
+        raw.value ||
+        valueFromCharacter(rarity, favorites)
+      )
+    ),
+    aliases: Array.isArray(forced.aliases || raw.nicknames || raw.aliases)
+      ? [...(forced.aliases || raw.nicknames || raw.aliases)]
+      : [],
     source: forced.source || raw.source || 'Jikan/MAL',
     limited: Boolean(forced.limited || raw.limited),
     event: forced.event || raw.event || null,
     addedAt: Number(forced.addedAt || raw.addedAt || now())
   }
 }
+
 
 async function fetchJson(url, timeout = 12000) {
   const controller = new AbortController()
@@ -551,14 +622,47 @@ function teamPower(state, user) {
   return ids.reduce((sum, id) => sum + powerOf(state, user.collection.find(item => item.uid === id)), 0)
 }
 
-function formatCharacter(char, item = null) {
+function genderLabel(value) {
+  const raw = lower(value)
+  if (!raw) return 'No registrado'
+  if (raw === 'male' || raw === 'masculino') return 'Masculino'
+  if (raw === 'female' || raw === 'femenino') return 'Femenino'
+  return clean(value)
+}
+
+function mediaTypeLabel(value) {
+  const raw = String(value || '').toUpperCase()
+  const labels = {
+    ANIME: 'Anime',
+    MANGA: 'Manga',
+    NOVEL: 'Novela',
+    ONE_SHOT: 'One-shot'
+  }
+  return labels[raw] || clean(value) || 'No registrado'
+}
+
+function formatCharacter(char, item = null, detailed = true) {
   const lines = [
-    `🎴 *${char.name}*`,
-    `📺 Serie: ${char.series}`,
-    `✨ Rareza: ${stars(item?.rarity || char.rarity)}`,
-    `💰 Valor: ${money(char.value)}`,
-    `🆔 ID: ${char.id}`
+    `🎴 *${char.name}*`
   ]
+
+  if (char.nativeName && char.nativeName !== char.name) {
+    lines.push(`🈶 Nombre nativo: ${char.nativeName}`)
+  }
+
+  lines.push(`📺 Serie: ${char.series}`)
+
+  if (detailed) {
+    lines.push(`🎞️ Tipo: ${mediaTypeLabel(char.mediaType)}`)
+    lines.push(`🚻 Género: ${genderLabel(char.gender)}`)
+    lines.push(`🎂 Edad: ${char.age || 'No registrada'}`)
+    lines.push(`❤️ Favoritos: ${money(char.favorites || 0)}`)
+  }
+
+  lines.push(`✨ Rareza: ${stars(item?.rarity || char.rarity)}`)
+  lines.push(`💰 Valor: ${money(char.value)}`)
+  lines.push(`🆔 ID: ${char.id}`)
+
   if (item) {
     lines.push(`🔖 Copia: ${item.uid}`)
     lines.push(`📈 Nivel: ${item.level || 1}`)
@@ -566,10 +670,20 @@ function formatCharacter(char, item = null) {
     if (item.nickname) lines.push(`🏷️ Apodo: ${item.nickname}`)
     if (item.locked) lines.push('🔒 Protegido')
   }
+
   if (char.limited) lines.push('💎 LIMITED')
   if (char.event) lines.push(`🎊 Evento: ${char.event}`)
+
+  if (detailed && char.description) {
+    const short = char.description.length > 420
+      ? `${char.description.slice(0, 417)}...`
+      : char.description
+    lines.push('', `📝 ${short}`)
+  }
+
   return lines.join('\n')
 }
+
 
 function cooldownLeft(user, key, seconds) {
   const last = Number(user.cooldowns?.[key] || 0)
@@ -741,19 +855,46 @@ async function rollHandler(ctx) {
   for (const [jid, user] of Object.entries(state.users)) {
     if (user.notifications?.wish !== false && user.wishlist?.includes(result.char.id)) wishers.push(jid)
   }
-  const wishLine = wishers.length ? `\n💖 Wishlist: ${wishers.slice(0, 5).map(mention).join(', ')}` : ''
-  await sendCharacter(ctx, result.char, [
-    '✨ *APARECIÓ UN PERSONAJE* ✨', '',
-    `🎴 ${result.char.name}`,
-    `📺 ${result.char.series}`,
-    `⭐ ${stars(result.char.rarity)}`,
-    `💰 ${money(result.char.value)} monedas`,
-    `🆔 ${result.char.id}`,
-    wishLine,
+  const wishLine = wishers.length
+    ? `\n💖 Wishlist: ${wishers.slice(0, 5).map(mention).join(', ')}`
+    : ''
+
+  const spawnLines = [
+    '✨ *APARECIÓ UN PERSONAJE* ✨',
     '',
-    `Usa *${prefixOf(ctx)}claim* o *${prefixOf(ctx)}c*`,
-    `⏳ Tiempo: ${result.claimTimeSec}s`
-  ].filter(Boolean).join('\n'))
+    `🎴 *${result.char.name}*`
+  ]
+
+  if (
+    result.char.nativeName &&
+    result.char.nativeName !== result.char.name
+  ) {
+    spawnLines.push(`🈶 ${result.char.nativeName}`)
+  }
+
+  spawnLines.push(`📺 ${result.char.series}`)
+  spawnLines.push(`🎞️ ${mediaTypeLabel(result.char.mediaType)}`)
+  spawnLines.push(`🚻 ${genderLabel(result.char.gender)}`)
+  spawnLines.push(`🎂 Edad: ${result.char.age || 'No registrada'}`)
+  spawnLines.push(`❤️ Favoritos: ${money(result.char.favorites || 0)}`)
+  spawnLines.push(`⭐ ${stars(result.char.rarity)}`)
+  spawnLines.push(`💰 ${money(result.char.value)} monedas`)
+  spawnLines.push(`🆔 ${result.char.id}`)
+
+  if (wishLine) spawnLines.push(wishLine)
+
+  spawnLines.push('')
+  spawnLines.push(
+    `Usa *${prefixOf(ctx)}claim* o *${prefixOf(ctx)}c*`
+  )
+  spawnLines.push(`⏳ Tiempo: ${result.claimTimeSec}s`)
+
+  await sendCharacter(
+    ctx,
+    result.char,
+    spawnLines.filter(Boolean).join('\n')
+  )
+
 }
 
 async function claimHandler(ctx) {

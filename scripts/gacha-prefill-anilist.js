@@ -27,7 +27,19 @@ function rarityFromFavorites(favorites = 0) {
 
 function valueFromCharacter(rarity, favorites = 0) {
   const base = [0, 80, 180, 450, 1100, 3200, 9000][rarity] || 80
-  return base + Math.min(5000, Math.floor((Number(favorites) || 0) / 20))
+  return base + Math.min(
+    5000,
+    Math.floor((Number(favorites) || 0) / 20)
+  )
+}
+
+function cleanDescription(value) {
+  return String(value || '')
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<[^>]+>/g, '')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim()
+    .slice(0, 1200)
 }
 
 const query = `
@@ -44,6 +56,7 @@ const query = `
           large
           medium
         }
+        description(asHtml: false)
         gender
         age
         favourites
@@ -76,7 +89,7 @@ async function fetchPage(page) {
         headers: {
           'content-type': 'application/json',
           accept: 'application/json',
-          'user-agent': 'NeroBot-Gacha-Prefill/1.12'
+          'user-agent': 'NeroBot-Gacha-Prefill/1.12.1'
         },
         body: JSON.stringify({
           query,
@@ -97,7 +110,6 @@ async function fetchPage(page) {
       if (!response.ok) throw new Error(`HTTP ${response.status}`)
 
       const json = await response.json()
-
       if (json?.errors?.length) {
         throw new Error(json.errors.map(x => x.message).join('; '))
       }
@@ -123,13 +135,18 @@ function normalize(raw) {
   return {
     id: String(raw.id),
     name: raw?.name?.full || raw?.name?.native || `Personaje ${raw.id}`,
+    nativeName: raw?.name?.native || '',
     series:
       title.romaji ||
       title.english ||
       title.native ||
       'Serie no registrada',
+    mediaType: media?.type || '',
     image: raw?.image?.large || raw?.image?.medium || '',
     favorites,
+    gender: raw?.gender || '',
+    age: raw?.age == null ? '' : String(raw.age),
+    description: cleanDescription(raw?.description),
     rarity,
     value: valueFromCharacter(rarity, favorites),
     aliases: [
@@ -149,15 +166,20 @@ let imported = 0
 for (let index = 0; index < pageCount; index += 1) {
   let page
   do {
-    page = Math.floor(Math.random() * 600) + 1
+    // 1-300 evita muchas páginas profundas que AniList responde con 400.
+    page = Math.floor(Math.random() * 300) + 1
   } while (usedPages.has(page))
   usedPages.add(page)
 
   try {
     const rows = await fetchPage(page)
-    const characters = rows.map(normalize).filter(
-      character => character.id && character.name && character.image
-    )
+    const characters = rows
+      .map(normalize)
+      .filter(character =>
+        character.id &&
+        character.name &&
+        character.image
+      )
 
     withGachaState(state => {
       state.catalog ||= {}
@@ -170,20 +192,29 @@ for (let index = 0; index < pageCount; index += 1) {
     })
 
     imported += characters.length
-    const current = Object.keys(getGachaState().catalog || {}).length
+    const current = Object.keys(
+      getGachaState().catalog || {}
+    ).length
+
     console.log(
       `✅ AniList página ${page}: +${characters.length} | catálogo: ${current}`
     )
   } catch (error) {
-    console.warn(`⚠️ AniList página ${page}: ${error?.message || error}`)
+    console.warn(
+      `⚠️ AniList página ${page}: ${error?.message || error}`
+    )
   }
 
   await sleep(delayMs)
 }
 
 console.log('')
-console.log(`🎴 Prefill terminado. Importados/actualizados: ${imported}`)
 console.log(
-  `📚 Catálogo total: ${Object.keys(getGachaState().catalog || {}).length}`
+  `🎴 Prefill terminado. Importados/actualizados: ${imported}`
 )
-console.log('✅ .w puede usar el catálogo sin consultar APIs.')
+console.log(
+  `📚 Catálogo total: ${
+    Object.keys(getGachaState().catalog || {}).length
+  }`
+)
+console.log('✅ Personajes guardados con datos completos.')
