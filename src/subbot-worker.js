@@ -27,7 +27,6 @@ import {
   getSubbot,
   removeSubbot
 } from './lib/subbotRegistry.js'
-import { getGroupPrincipal } from './lib/principalStore.js'
 import { emitSubbotEvent } from './lib/subbotEvents.js'
 import {
   getInstanceMode,
@@ -35,6 +34,7 @@ import {
 } from './lib/modeStore.js'
 import { moderateIncoming } from './lib/nsfwGuard.js'
 import { getSubbotConfig, watchSubbotConfig } from './lib/subbotConfigStore.js'
+import { shouldHandleGroup } from './lib/instanceRouter.js'
 
 const args = process.argv.slice(2)
 const arg = name => {
@@ -581,8 +581,13 @@ async function start() {
         }
 
         if (chat.endsWith('@g.us')) {
-          const chosen = getGroupPrincipal(chat) || 'principal'
-          if (chosen !== id) continue
+          const { handle } = await shouldHandleGroup({
+            sock,
+            groupId: chat,
+            instanceType: 'subbot',
+            instanceId: id
+          })
+          if (!handle) continue
         }
 
         await command.execute({

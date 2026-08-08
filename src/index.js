@@ -19,13 +19,17 @@ import { getPermissionLevel, isOwner, isStaff, isSubOwner } from './lib/permissi
 import { moderateIncoming } from './lib/nsfwGuard.js'
 import { getGroup } from './lib/groupStore.js'
 import { rememberError } from './lib/errorReports.js'
-import { getGroupPrincipal } from './lib/principalStore.js'
 import { consumeSubbotEvents } from './lib/subbotEvents.js'
 import { sendInteractive, copyButton } from './lib/interactive.js'
 import { getInstanceMode, privateCommandsAllowed } from './lib/modeStore.js'
 import { hasPendingSubbotPhone, clearPendingSubbotPhone } from './lib/pendingSubbotPhone.js'
 import { createSubbotForPhone } from './commands/subbots.js'
 import { getCachedPhoneForLid, setCachedPhoneForLid } from './lib/lidCache.js'
+import {
+  shouldHandleGroup,
+  rememberPrincipalGroup,
+  refreshPrincipalPresence
+} from './lib/instanceRouter.js'
 
 const logger = pino({ level: process.env.BAILEYS_LOG_LEVEL || 'silent' })
 const sessionPath = path.resolve('sessions', config.sessionName)
@@ -387,6 +391,9 @@ async function startNeroBot() {
       phoneNumber = null
       console.log(`✅ ${config.botName} conectado como ${sock.user?.id || 'cuenta vinculada'}`)
       console.log(`📌 Tipo de instancia: ${config.instanceType === 'subbot' ? 'Subbot' : 'Bot principal'}`)
+      await refreshPrincipalPresence(sock).catch(error =>
+        console.warn('[INSTANCE ROUTER]', error?.message || error)
+      )
     }
 
     if (connection === 'close') {
@@ -411,6 +418,10 @@ async function startNeroBot() {
     }
   })
 
+
+  sock.ev.on('groups.update', () => {
+    refreshPrincipalPresence(sock).catch(() => {})
+  })
 
   sock.ev.on('group-participants.update', async update => {
     try {
@@ -498,8 +509,14 @@ async function startNeroBot() {
         }
 
         if (chat.endsWith('@g.us')) {
-          const chosen = getGroupPrincipal(chat) || 'principal'
-          if (chosen !== 'principal') continue
+          rememberPrincipalGroup(chat, sock.user?.id || sock.user?.jid || '')
+          const { handle } = await shouldHandleGroup({
+            sock,
+            groupId: chat,
+            instanceType: 'principal',
+            instanceId: 'principal'
+          })
+          if (!handle) continue
         }
 
         await command.execute({

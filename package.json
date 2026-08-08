@@ -1,7 +1,7 @@
 {
   "name": "nero-bot",
-  "version": "1.13.0",
-  "description": "Nero Bot v1.13.0: Nero Sales multi-grupo, catálogo interactivo, leads, pagos y server status",
+  "version": "1.13.1",
+  "description": "Nero Bot v1.13.1: subbots autónomos en grupos, routing automático y join con errores claros",
   "type": "module",
   "main": "src/index.js",
   "scripts": {

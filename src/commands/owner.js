@@ -73,17 +73,130 @@ export const ownerInfo = {
   }
 }
 
+function joinErrorDetails(error) {
+  const raw = [
+    error?.message,
+    error?.data,
+    error?.output?.payload?.message,
+    error?.output?.payload?.error,
+    error?.cause?.message
+  ]
+    .filter(Boolean)
+    .map(value => typeof value === 'string' ? value : JSON.stringify(value))
+    .join(' ')
+    .toLowerCase()
+
+  const status =
+    Number(error?.output?.statusCode || 0) ||
+    Number(error?.statusCode || 0) ||
+    null
+
+  if (raw.includes('account_reachout_restricted')) {
+    return [
+      '⚠️ *WhatsApp restringió temporalmente esta cuenta para unirse a grupos mediante invitación.*',
+      '',
+      'No es un fallo del enlace ni de Nero.',
+      'La restricción pertenece a la cuenta de WhatsApp que está ejecutando este comando.',
+      '',
+      '• Espera antes de intentarlo otra vez.',
+      '• Evita repetir .join muchas veces.',
+      '• También puedes agregar esa cuenta al grupo directamente desde WhatsApp.',
+      '',
+      `Instancia: ${error?.neroInstance || 'Nero'}`
+    ].join('\n')
+  }
+
+  if (
+    status === 429 ||
+    /rate.?overlimit|too many requests|\b429\b/.test(raw)
+  ) {
+    return [
+      '⏳ *WhatsApp aplicó un límite temporal a las invitaciones.*',
+      'Espera unos minutos antes de volver a usar .join.'
+    ].join('\n')
+  }
+
+  if (
+    /invite.*expired|expired.*invite|revoked|not.?found|item-not-found|410/.test(raw)
+  ) {
+    return [
+      '❌ *La invitación parece vencida, revocada o inválida.*',
+      'Genera un enlace nuevo del grupo y vuelve a intentarlo.'
+    ].join('\n')
+  }
+
+  if (
+    status === 401 ||
+    status === 403 ||
+    /not.?authorized|forbidden|not.?allowed/.test(raw)
+  ) {
+    return [
+      '❌ *WhatsApp no autorizó a esta cuenta a unirse mediante ese enlace.*',
+      'Comprueba el enlace y el estado de la cuenta antes de volver a intentarlo.'
+    ].join('\n')
+  }
+
+  return `❌ No se pudo unir al grupo: ${error?.message || 'error desconocido'}`
+}
+
 export const joinGroup = {
-  name: 'join', aliases: ['unirse'],
+  name: 'join',
+  aliases: ['unirse'],
   async execute(ctx) {
     ownerOnly(ctx)
-    const input = ctx.args.join(' ')
-    const code = input.match(/chat\.whatsapp\.com\/([A-Za-z0-9_-]+)/i)?.[1] || input.trim()
-    if (!code) throw new Error('Uso: .join <enlace o código de invitación>')
-    const jid = await ctx.sock.groupAcceptInvite(code)
-    await safeReply(ctx, `✅ Nero se unió al grupo: ${jid}`)
+
+    const input = ctx.args.join(' ').trim()
+    const match = input.match(
+      /(?:https?:\/\/)?chat\.whatsapp\.com\/([A-Za-z0-9_-]{10,})/i
+    )
+    const code = (match?.[1] || input)
+      .split(/[?#\s]/)[0]
+      .trim()
+
+    if (!code || !/^[A-Za-z0-9_-]{10,}$/.test(code)) {
+      await safeReply(
+        ctx,
+        '❌ Uso: *.join <enlace o código de invitación válido>*'
+      )
+      return
+    }
+
+    const instance =
+      ctx.instanceType === 'subbot'
+        ? `Subbot +${ctx.instanceId || 'desconocido'}`
+        : 'Nero principal'
+
+    try {
+      let inviteInfo = null
+      if (typeof ctx.sock.groupGetInviteInfo === 'function') {
+        inviteInfo = await ctx.sock.groupGetInviteInfo(code).catch(() => null)
+      }
+
+      const jid = await ctx.sock.groupAcceptInvite(code)
+      let subject = inviteInfo?.subject || ''
+
+      if (!subject && jid) {
+        const metadata = await ctx.sock.groupMetadata(jid).catch(() => null)
+        subject = metadata?.subject || ''
+      }
+
+      await safeReply(
+        ctx,
+        [
+          '✅ *Nero se unió al grupo.*',
+          subject ? `👥 Grupo: ${subject}` : null,
+          `🆔 ${jid}`,
+          `🤖 Instancia: ${instance}`
+        ].filter(Boolean).join('\n')
+      )
+    } catch (error) {
+      error.neroInstance = instance
+      console.warn('[JOIN]', instance, error?.message || error)
+      await safeReply(ctx, joinErrorDetails(error))
+    }
   }
 }
+
 
 export const leaveGroup = {
   name: 'leave', aliases: ['salir'],

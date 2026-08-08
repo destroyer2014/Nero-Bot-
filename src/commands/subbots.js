@@ -13,6 +13,10 @@ import {
   getGroupPrincipal,
   resetGroupPrincipal
 } from '../lib/principalStore.js'
+import {
+  getAvailableGroupInstances,
+  resolveGroupInstance
+} from '../lib/instanceRouter.js'
 
 const num = jid => String(jid || '')
   .split('@')[0]
@@ -183,28 +187,59 @@ export const setPrincipalCommand = {
       throw new Error('Este comando solo funciona en grupos.')
     }
 
-    const bots = await connectedSubbotsInGroup(ctx)
-    const current = getGroupPrincipal(ctx.chat) || 'principal'
-    const all = [
+    const available = await getAvailableGroupInstances(
+      ctx.sock,
+      ctx.chat,
       {
-        id: 'principal',
-        phone: 'Nero principal',
-        status: 'connected'
-      },
-      ...bots
+        instanceType: ctx.instanceType,
+        instanceId: ctx.instanceId
+      }
+    )
+
+    const automatic = await resolveGroupInstance({
+      sock: ctx.sock,
+      groupId: ctx.chat,
+      instanceType: ctx.instanceType,
+      instanceId: ctx.instanceId
+    })
+
+    const current = getGroupPrincipal(ctx.chat)
+    const all = [
+      ...(available.principalPresent
+        ? [{
+            id: 'principal',
+            phone: 'Nero principal',
+            status: 'connected'
+          }]
+        : []),
+      ...available.subbots
     ]
+
+    if (!all.length) {
+      throw new Error('No se detectaron instancias de Nero disponibles.')
+    }
 
     const rows = all.map(bot => ({
       title: bot.id === 'principal'
         ? 'Nero principal'
         : `+${bot.phone}`,
-      description: `${bot.id === 'principal' ? 'Bot principal' : 'Subbot del grupo'} • ${bot.id === current ? 'seleccionado' : bot.status}`,
+      description: `${
+        bot.id === 'principal'
+          ? 'Bot principal'
+          : 'Subbot del grupo'
+      } • ${
+        String(bot.id) === String(current)
+          ? 'seleccionado manualmente'
+          : (!current && String(bot.id) === String(automatic.id))
+            ? 'automático'
+            : bot.status
+      }`,
       id: `${config.prefix}principalpick ${bot.id}`
     }))
 
-    const body = bots.length
+    const body = all.length > 1
       ? 'Selecciona la única instancia que responderá comandos en este grupo.'
-      : 'No se detectaron subbots conectados dentro de este grupo. Solo está disponible Nero principal.'
+      : 'Solo hay una instancia de Nero en este grupo; responderá automáticamente aunque no uses .setbot.'
 
     await sendInteractive(ctx.sock, ctx.chat, {
       title: 'Elegir bot del grupo',
@@ -227,22 +262,27 @@ export const principalPickCommand = {
   async execute(ctx) {
     if (!ctx.chat.endsWith('@g.us')) return
 
-    const id = ctx.args[0]
+    const id = String(ctx.args[0] || '')
     if (!id) throw new Error('Selección inválida.')
 
-    if (id !== 'principal') {
-      const participants = await groupParticipantDigits(ctx.sock, ctx.chat)
-      const bot = getSubbot(id)
-
-      if (
-        !bot ||
-        bot.status !== 'connected' ||
-        !subbotBelongsToGroup(bot, ctx.chat, participants)
-      ) {
-        throw new Error(
-          'Ese subbot no está conectado o no pertenece a este grupo.'
-        )
+    const available = await getAvailableGroupInstances(
+      ctx.sock,
+      ctx.chat,
+      {
+        instanceType: ctx.instanceType,
+        instanceId: ctx.instanceId
       }
+    )
+
+    const ids = new Set([
+      ...(available.principalPresent ? ['principal'] : []),
+      ...available.subbots.map(bot => String(bot.id))
+    ])
+
+    if (!ids.has(id)) {
+      throw new Error(
+        'Esa instancia no está conectada o no pertenece a este grupo.'
+      )
     }
 
     setGroupPrincipal(ctx.chat, id)
@@ -252,7 +292,9 @@ export const principalPickCommand = {
       : `+${getSubbot(id)?.phone || id}`
 
     await ctx.sock.sendMessage(ctx.chat, {
-      text: `✅ *${selected}* será la única instancia que responderá comandos en este grupo.`
+      text:
+        `✅ *${selected}* será la única instancia que responderá comandos en este grupo.\n` +
+        `Para volver al modo automático usa *${config.prefix}resetprincipal*.`
     }, { quoted: ctx.msg })
   }
 }
@@ -261,13 +303,32 @@ export const principalInfoCommand = {
   name: 'principal',
   aliases: [],
   async execute(ctx) {
-    const id = getGroupPrincipal(ctx.chat) || 'principal'
-    const selected = id === 'principal'
+    if (!ctx.chat.endsWith('@g.us')) {
+      throw new Error('Este comando solo funciona en grupos.')
+    }
+
+    const explicit = getGroupPrincipal(ctx.chat)
+    const route = await resolveGroupInstance({
+      sock: ctx.sock,
+      groupId: ctx.chat,
+      instanceType: ctx.instanceType,
+      instanceId: ctx.instanceId
+    })
+
+    const selected = route.id === 'principal'
       ? 'Nero principal'
-      : `+${getSubbot(id)?.phone || id}`
+      : `+${getSubbot(route.id)?.phone || route.id}`
 
     await ctx.sock.sendMessage(ctx.chat, {
-      text: `🤖 Bot seleccionado en este grupo: *${selected}*`
+      text: [
+        `🤖 Instancia que responde: *${selected}*`,
+        explicit
+          ? '🎯 Modo: selección manual (.setbot)'
+          : '⚙️ Modo: selección automática',
+        route.source === 'fallback'
+          ? '⚠️ La selección guardada no está disponible; Nero está usando una instancia disponible temporalmente.'
+          : null
+      ].filter(Boolean).join('\n')
     }, { quoted: ctx.msg })
   }
 }
@@ -276,10 +337,27 @@ export const resetPrincipalCommand = {
   name: 'resetprincipal',
   aliases: [],
   async execute(ctx) {
+    if (!ctx.chat.endsWith('@g.us')) {
+      throw new Error('Este comando solo funciona en grupos.')
+    }
+
     resetGroupPrincipal(ctx.chat)
 
+    const route = await resolveGroupInstance({
+      sock: ctx.sock,
+      groupId: ctx.chat,
+      instanceType: ctx.instanceType,
+      instanceId: ctx.instanceId
+    })
+
+    const selected = route.id === 'principal'
+      ? 'Nero principal'
+      : `+${getSubbot(route.id)?.phone || route.id}`
+
     await ctx.sock.sendMessage(ctx.chat, {
-      text: '✅ Este grupo volvió a usar Nero principal.'
+      text:
+        '✅ El grupo volvió a *selección automática*.\n' +
+        `Ahora responderá: *${selected}*.`
     }, { quoted: ctx.msg })
   }
 }
