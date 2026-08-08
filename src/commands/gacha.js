@@ -3343,49 +3343,57 @@ async function gachaInfoHandler(ctx) {
   const prefix = prefixOf(ctx)
   const requested = lower(argsWithoutMentions(ctx)[0] || '')
 
-  if (!requested) {
-    const index = HELP_SECTIONS
-      .filter(section => section.slug !== 'owner' || ctx.isOwner)
-      .map(section => `• *${section.slug}* — ${section.title.replace(/^[^\s]+\s*/, '')}`)
-      .join('\n')
+  const wantsAll =
+    !requested ||
+    requested === 'all' ||
+    requested === 'todo' ||
+    requested === 'todos'
 
-    await reply(ctx, [
-      '🎴 *NERO GACHA — GUÍA DE COMANDOS*',
+  if (wantsAll) {
+    const body = HELP_SECTIONS
+      .map(section => renderHelpSection(section, prefix))
+      .join('\n\n━━━━━━━━━━━━━━━━━━\n\n')
+
+    const text = [
+      '🎴 *NERO GACHA — GUÍA COMPLETA*',
       '',
       `${prefix}w mezcla todos los personajes; no existen waifu/husbando separados.`,
-      'Las tiradas usan el catálogo local. AniList se usa para ampliar y buscar personajes.',
+      'Las tiradas usan el catálogo local y AniList se usa para ampliar/buscar personajes.',
       '',
-      '📚 *Categorías*',
-      index,
+      '━━━━━━━━━━━━━━━━━━',
       '',
-      `Usa *${prefix}gachainfo <categoría>* para ver comandos y descripciones.`,
-      `Ejemplo: *${prefix}gachainfo tiradas*`,
-      `Usa *${prefix}gachainfo all* para recibir la guía completa por partes.`
-    ].join('\n'))
-    return
-  }
+      body,
+      '',
+      '━━━━━━━━━━━━━━━━━━',
+      '',
+      '📚 Puedes filtrar una categoría con:',
+      `*${prefix}gachainfo tiradas*`,
+      `*${prefix}gachainfo personajes*`,
+      `*${prefix}gachainfo economia*`,
+      `*${prefix}gachainfo mercado*`,
+      `*${prefix}gachainfo owner*`
+    ].join('\n')
 
-  if (requested === 'all' || requested === 'todo' || requested === 'todos') {
-    const allowed = HELP_SECTIONS.filter(
-      section => section.slug !== 'owner' || ctx.isOwner
-    )
-    const chunks = allowed.map(section => renderHelpSection(section, prefix))
-    await sendHelpChunks(ctx, chunks)
+    await reply(ctx, text)
     return
   }
 
   const slug = HELP_ALIASES[requested] || requested
   const section = HELP_SECTIONS.find(item => item.slug === slug)
 
-  if (!section || (section.slug === 'owner' && !ctx.isOwner)) {
+  if (!section) {
     throw new Error(
-      `Categoría no encontrada. Usa ${prefix}gachainfo para ver las disponibles.`
+      `Categoría no encontrada. Usa ${prefix}gachainfo para ver toda la guía.`
     )
   }
 
   await reply(
     ctx,
-    `🎴 *NERO GACHA — ${section.title}*\n\n${renderHelpSection(section, prefix)}`
+    [
+      `🎴 *NERO GACHA — ${section.title}*`,
+      '',
+      renderHelpSection(section, prefix)
+    ].join('\n')
   )
 }
 

@@ -1,7 +1,7 @@
 {
   "name": "nero-bot",
-  "version": "1.12.1",
-  "description": "Nero Bot v1.12.1: Gacha AniList con datos completos, catálogo local y fichas enriquecidas",
+  "version": "1.12.2",
+  "description": "Nero Bot v1.12.2: gachainfo completo en un solo mensaje",
   "type": "module",
   "main": "src/index.js",
   "scripts": {
