@@ -1,7 +1,7 @@
 {
   "name": "nero-bot",
-  "version": "1.12.2",
-  "description": "Nero Bot v1.12.2: gachainfo completo en un solo mensaje",
+  "version": "1.12.3",
+  "description": "Nero Bot v1.12.3: pairing de subbots estable, eventos atómicos y anti-duplicados",
   "type": "module",
   "main": "src/index.js",
   "scripts": {

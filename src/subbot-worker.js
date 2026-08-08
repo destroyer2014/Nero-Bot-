@@ -54,6 +54,42 @@ const formatCode = code => code?.match(/.{1,4}/g)?.join('-') || code
 const wait = ms => new Promise(resolve => setTimeout(resolve, ms))
 
 let cleaningUp = false
+
+let pairingPauseHandled = false
+
+async function pausePairing(reason, statusCode = null) {
+  if (cleaningUp || pairingPauseHandled) return
+
+  pairingPauseHandled = true
+  cleaningUp = true
+
+  upsertSubbot({
+    id,
+    phone,
+    status: 'pairing-paused',
+    pairingPausedAt: Date.now(),
+    lastDisconnectCode: statusCode || null,
+    lastDisconnectReason: reason
+  })
+
+  const entry = getSubbot(id)
+
+  if (entry?.requestChat) {
+    await emitSubbotEvent({
+      type: 'pairing-paused',
+      chat: entry.requestChat,
+      requester: entry.requester,
+      id,
+      phone,
+      statusCode,
+      reason,
+      dedupeKey:
+        `pairing-paused:${id}:${statusCode || 'unknown'}`
+    }).catch(() => {})
+  }
+
+  setTimeout(() => process.exit(0), 300)
+}
 let sockRef = null
 let runtimeConfig = getSubbotConfig(id, {
   botName: config.botName,
@@ -259,29 +295,31 @@ function rememberGroup(groupId) {
 
 async function requestDefaultPairingCode(sock) {
   const phoneNumber = clean(phone)
-  let lastError
 
-  for (let attempt = 1; attempt <= 3; attempt += 1) {
-    try {
-      await wait(attempt === 1 ? 1500 : 3000)
-      const code = await sock.requestPairingCode(phoneNumber)
+  await wait(1500)
 
-      if (!code) {
-        throw new Error('WhatsApp no devolvió un código de vinculación.')
-      }
+  try {
+    const code = await sock.requestPairingCode(phoneNumber)
 
-      return code
-    } catch (error) {
-      lastError = error
-      console.error(
-        `[SUBBOT PAIRING] intento ${attempt}/3:`,
-        error?.message || error
+    if (!code) {
+      throw new Error(
+        'WhatsApp no devolvió un código de vinculación.'
       )
     }
-  }
 
-  throw lastError || new Error('No se pudo solicitar el código de WhatsApp.')
+    return code
+  } catch (error) {
+    if (isRateLimit(error)) {
+      throw new Error(
+        'WhatsApp aplicó un límite temporal. ' +
+        'Espera antes de solicitar otro código.'
+      )
+    }
+
+    throw error
+  }
 }
+
 
 async function cleanup(reason = 'sesión cerrada') {
   if (cleaningUp) return
@@ -296,7 +334,8 @@ async function cleanup(reason = 'sesión cerrada') {
       requester: entry.requester,
       id,
       phone,
-      reason
+      reason,
+      dedupeKey: `deleted:${id}:${reason}`
     }).catch(() => {})
   }
 
@@ -366,7 +405,8 @@ async function start() {
           chat: entry.requestChat,
           requester: entry.requester,
           id,
-          phone
+          phone,
+          dedupeKey: `connected:${id}`
         }).catch(() => {})
       }
     }
@@ -380,8 +420,9 @@ async function start() {
       }
 
       if (needsPairing && !state.creds.registered) {
-        await cleanup(
-          `la conexión se cerró durante la vinculación${statusCode ? ` (HTTP ${statusCode})` : ''}`
+        await pausePairing(
+          `la conexión se cerró durante la vinculación${statusCode ? ` (HTTP ${statusCode})` : ''}`,
+          statusCode || null
         )
         return
       }
@@ -415,14 +456,17 @@ async function start() {
           id,
           phone,
           code,
-          formattedCode: formatCode(code)
+          formattedCode: formatCode(code),
+          dedupeKey: `pairing-code:${id}:${code}`
         })
       }
     } catch (error) {
       console.error('[SUBBOT PAIRING]', error)
 
-      await cleanup(
-        `falló la generación del código: ${error?.message || error}`
+      const statusCode = new Boom(error)?.output?.statusCode
+      await pausePairing(
+        `falló la generación del código: ${error?.message || error}`,
+        statusCode || null
       )
       return
     }

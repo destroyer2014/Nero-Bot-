@@ -114,12 +114,10 @@ export const codeCommand = {
       }
 
       const detected = num(ctx.sender)
-      const lidDigits = String(ctx.sender || '').split('@')[0].split(':')[0]
       const detectedOk =
         !String(ctx.sender).endsWith('@lid') &&
         detected.length >= 8 &&
-        detected.length <= 15 &&
-        detected !== lidDigits
+        detected.length <= 15
 
       if (!detectedOk) {
         const wait = canRequestCode(ctx.sender)

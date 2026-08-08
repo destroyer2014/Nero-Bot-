@@ -35,6 +35,110 @@ let pairingCodeRequested = false
 let reconnectTimer = null
 let reconnectAttempts = 0
 
+let subbotEventTimer = null
+let subbotEventSock = null
+const recentSubbotEventKeys = new Map()
+const SUBBOT_EVENT_DEDUPE_MS = 10 * 60 * 1000
+
+function subbotEventKey(event = {}) {
+  return event.dedupeKey ||
+    `${event.type || 'event'}:${event.id || event.phone || ''}:${event.code || event.reason || ''}`
+}
+
+function pruneSubbotEventKeys() {
+  const cutoff = Date.now() - SUBBOT_EVENT_DEDUPE_MS
+
+  for (const [key, at] of recentSubbotEventKeys) {
+    if (at < cutoff) recentSubbotEventKeys.delete(key)
+  }
+}
+
+async function deliverSubbotEvent(event) {
+  if (!event?.chat) return
+
+  const sock = subbotEventSock
+  if (!sock) throw new Error('El socket principal no está disponible.')
+
+  pruneSubbotEventKeys()
+
+  const key = subbotEventKey(event)
+  const lastSent = recentSubbotEventKeys.get(key)
+
+  if (
+    lastSent &&
+    Date.now() - lastSent < SUBBOT_EVENT_DEDUPE_MS
+  ) {
+    console.log('[SUBBOT EVENT] Duplicado ignorado:', key)
+    return
+  }
+
+  if (event.type === 'pairing-code') {
+    try {
+      await sendInteractive(sock, event.chat, {
+        title: 'NERO • Vinculación de subbot',
+        body:
+          `✅ Sesión para: +${event.phone}\n\n` +
+          `Código: *${event.formattedCode || event.code}*\n\n` +
+          'En WhatsApp abre Dispositivos vinculados > Vincular con número.',
+        footer: 'Nero Bot • El código vence pronto',
+        buttons: [copyButton('Copiar código', event.code)]
+      }, null)
+    } catch {
+      await sock.sendMessage(event.chat, {
+        text:
+          `🔐 *NERO*\n` +
+          `Sesión: +${event.phone}\n` +
+          `Código: *${event.formattedCode || event.code}*`
+      })
+    }
+  } else if (event.type === 'connected') {
+    await sock.sendMessage(event.chat, {
+      text:
+        '✅ *Ahora eres subbot de Nero.*\n' +
+        `Cuenta: +${event.phone}\n` +
+        'La instancia quedó guardada y activa con PM2.'
+    })
+  } else if (event.type === 'deleted') {
+    await sock.sendMessage(event.chat, {
+      text:
+        `🗑️ La sesión del subbot +${event.phone} fue eliminada del VPS.\n` +
+        `Motivo: ${event.reason || 'sesión cerrada'}`
+    })
+  } else if (event.type === 'pairing-paused') {
+    await sock.sendMessage(event.chat, {
+      text:
+        `⚠️ *Vinculación pausada para +${event.phone}.*\n\n` +
+        `WhatsApp cerró temporalmente la conexión${
+          event.statusCode ? ` (HTTP ${event.statusCode})` : ''
+        }.\n` +
+        'La sesión incompleta *NO fue eliminada del VPS* y Nero no solicitará códigos en bucle.\n\n' +
+        'Espera el cooldown y vuelve a usar *.code* si el código anterior no vincula.'
+    })
+  } else {
+    return
+  }
+
+  recentSubbotEventKeys.set(key, Date.now())
+}
+
+function startSubbotEventConsumer(sock) {
+  subbotEventSock = sock
+
+  if (subbotEventTimer) return
+
+  subbotEventTimer = setInterval(() => {
+    consumeSubbotEvents(deliverSubbotEvent)
+      .catch(error => {
+        console.error(
+          '[SUBBOT EVENTS]',
+          error?.message || error
+        )
+      })
+  }, 1500)
+
+  subbotEventTimer.unref?.()
+}
+
 function cleanPhoneNumber(value = '') {
   return String(value).replace(/\D/g, '')
 }
@@ -254,22 +358,7 @@ async function startNeroBot() {
   sock.ev.on('creds.update', saveCreds)
   startGachaScheduler(sock)
 
-  const eventTimer = setInterval(() => consumeSubbotEvents(async event => {
-    if (!event?.chat) return
-    if (event.type === 'pairing-code') {
-      await sendInteractive(sock, event.chat, {
-        title: 'NERO • Vinculación de subbot',
-        body: `✅ Sesión para: +${event.phone}\n\nCódigo: *${event.formattedCode || event.code}*\n\nEn WhatsApp abre Dispositivos vinculados > Vincular con número.`,
-        footer: 'Nero Bot • El código vence pronto',
-        buttons: [copyButton('Copiar código', event.code)]
-      }, null).catch(() => sock.sendMessage(event.chat, { text: `🔐 *NERO*\nSesión: +${event.phone}\nCódigo: *${event.formattedCode || event.code}*` }))
-    } else if (event.type === 'connected') {
-      await sock.sendMessage(event.chat, { text: `✅ *Ahora eres subbot de Nero.*\nCuenta: +${event.phone}\nLa instancia quedó guardada y activa con PM2.` }).catch(() => {})
-    } else if (event.type === 'deleted') {
-      await sock.sendMessage(event.chat, { text: `🗑️ La sesión del subbot +${event.phone} fue eliminada del VPS.\nMotivo: ${event.reason || 'sesión cerrada'}` }).catch(() => {})
-    }
-  }).catch(error => console.error('[SUBBOT EVENTS]', error)), 1500)
-  eventTimer.unref()
+  startSubbotEventConsumer(sock)
 
   // El código de vinculación puede solicitarse inmediatamente después
   // de crear el socket. Un breve margen evita carreras durante el arranque.
