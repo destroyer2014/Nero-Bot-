@@ -1,7 +1,7 @@
 {
   "name": "nero-bot",
-  "version": "1.10.1",
-  "description": "Nero Bot v1.10.1: configuración web segura e independiente para subbots",
+  "version": "1.11.0",
+  "description": "Nero Bot v1.11.0: mega sistema Gacha con personajes, economía, colección, mercado, eventos y PvE",
   "type": "module",
   "main": "src/index.js",
   "scripts": {

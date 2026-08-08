@@ -22,6 +22,7 @@ import { generatorCommands } from './generators.js'
 import { extraSearchCommands } from './extra-search.js'
 import { extraUtilityCommands } from './extra-utils.js'
 import { animeEvoCommands } from './anime-evo.js'
+import { gachaCommands } from './gacha.js'
 
 const commands = [
   menu,
@@ -32,6 +33,7 @@ const commands = [
   ...favoriteCommands,
   ...reactionCommands,
   ...animeEvoCommands,
+  ...gachaCommands,
   ...subbotCommands,
   ...identityCommands,
   ...downloadCommands,

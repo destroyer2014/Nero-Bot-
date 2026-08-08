@@ -14,6 +14,7 @@ import makeWASocket, {
 import config from '../config.js'
 import { extractText } from './lib/text.js'
 import { findCommand } from './commands/index.js'
+import { startGachaScheduler } from './commands/gacha.js'
 import { getPermissionLevel, isOwner, isStaff, isSubOwner } from './lib/permissions.js'
 import { moderateIncoming } from './lib/nsfwGuard.js'
 import { getGroup } from './lib/groupStore.js'
@@ -251,6 +252,7 @@ async function startNeroBot() {
   })
 
   sock.ev.on('creds.update', saveCreds)
+  startGachaScheduler(sock)
 
   const eventTimer = setInterval(() => consumeSubbotEvents(async event => {
     if (!event?.chat) return

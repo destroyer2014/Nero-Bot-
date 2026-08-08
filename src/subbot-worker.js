@@ -15,6 +15,7 @@ import makeWASocket, {
 import config from '../config.js'
 import { extractText } from './lib/text.js'
 import { findCommand } from './commands/index.js'
+import { startGachaScheduler } from './commands/gacha.js'
 import {
   getPermissionLevel,
   isOwner,
@@ -329,6 +330,7 @@ async function start() {
 
   sockRef = sock
   sock.ev.on('creds.update', saveCreds)
+  startGachaScheduler(sock)
 
   sock.ev.on('groups.update', () => {
     refreshGroups(sock).catch(() => {})
