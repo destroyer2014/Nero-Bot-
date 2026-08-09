@@ -20,6 +20,7 @@ import { stalkingCommands } from './stalking.js'
 import { stickerCommands } from './stickers.js'
 import { generatorCommands } from './generators.js'
 import { extraSearchCommands } from './extra-search.js'
+import { peruLookupCommands } from './peru.js'
 import { extraUtilityCommands } from './extra-utils.js'
 import { animeEvoCommands } from './anime-evo.js'
 import { gachaCommands } from './gacha.js'
@@ -42,6 +43,7 @@ const commands = [
   ...identityCommands,
   ...downloadCommands,
   ...extraSearchCommands,
+  ...peruLookupCommands,
   ...toolCommands,
   ...extraUtilityCommands,
   ...generatorCommands,

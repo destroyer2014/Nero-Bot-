@@ -17,7 +17,9 @@ const sections=[
 ['.gif • .tenor <búsqueda>','Busca GIFs y videos cortos.'],
 ['.npm <paquete>','Consulta información de un paquete NPM.'],
 ['.googleimages <búsqueda>','Busca imágenes en Google.'],
-['.wikipedia • .wiki <consulta>','Busca información en Wikipedia.'] ]},
+['.wikipedia • .wiki <consulta>','Busca información en Wikipedia.'],
+['.dni <8 dígitos>','Consulta nombres y código de verificación de un DNI peruano.'],
+['.ruc <11 dígitos>','Consulta datos públicos de una empresa por RUC.'] ]},
 {title:'📥 DESCARGAS',entries:[
 ['.tiktok • .tt <url>','Descarga videos de TikTok.'],
 ['.ttimg <url>','Descarga fotos de TikTok.'],
