@@ -26,12 +26,14 @@ import { animeEvoCommands } from './anime-evo.js'
 import { gachaCommands } from './gacha.js'
 import { salesCommands } from './sales.js'
 import { serverCommand } from './server.js'
+import { gameCommands } from './games.js'
 
 const commands = [
   menu,
   ping,
   info,
   serverCommand,
+  ...gameCommands,
   ...salesCommands,
   reportCommand,
   ...modeCommands,

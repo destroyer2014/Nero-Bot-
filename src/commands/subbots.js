@@ -23,6 +23,13 @@ const num = jid => String(jid || '')
   .split(':')[0]
   .replace(/\D/g, '')
 
+function assertInstanceControl(ctx) {
+  const level = String(ctx.permissionLevel || 'user').toLowerCase()
+  if (!['owner', 'subowner'].includes(level)) {
+    throw new Error('Este comando es exclusivo para Owner y SubOwner.')
+  }
+}
+
 const fmt = ms => {
   const seconds = Math.max(0, Math.floor(ms / 1000))
   const days = Math.floor(seconds / 86400)
@@ -183,6 +190,7 @@ export const setPrincipalCommand = {
   name: 'setprincipal',
   aliases: ['setbot'],
   async execute(ctx) {
+    assertInstanceControl(ctx)
     if (!ctx.chat.endsWith('@g.us')) {
       throw new Error('Este comando solo funciona en grupos.')
     }
@@ -260,6 +268,7 @@ export const principalPickCommand = {
   name: 'principalpick',
   aliases: [],
   async execute(ctx) {
+    assertInstanceControl(ctx)
     if (!ctx.chat.endsWith('@g.us')) return
 
     const id = String(ctx.args[0] || '')
@@ -337,6 +346,7 @@ export const resetPrincipalCommand = {
   name: 'resetprincipal',
   aliases: [],
   async execute(ctx) {
+    assertInstanceControl(ctx)
     if (!ctx.chat.endsWith('@g.us')) {
       throw new Error('Este comando solo funciona en grupos.')
     }
