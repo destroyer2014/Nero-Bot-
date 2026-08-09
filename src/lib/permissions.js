@@ -35,7 +35,9 @@ export function getPermissionLevel(jid = '') {
 }
 
 export function isOwner(jid = '') {
-  return getPermissionLevel(jid) === 'owner'
+  // El SubOwner conserva su nivel "subowner", pero funcionalmente
+  // recibe el mismo acceso total que el Owner en todo Nero.
+  return ['owner', 'subowner'].includes(getPermissionLevel(jid))
 }
 
 export function isSubOwner(jid = '') {

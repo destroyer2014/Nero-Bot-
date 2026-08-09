@@ -142,6 +142,12 @@ export const idCommand = {
     const values = candidates(ctx)
     const lid = values.find(isLid) || null
     const phone = await resolveSenderPhone(ctx)
+    const level = String(ctx.permissionLevel || 'user')
+    const role = level === 'owner'
+      ? '👑 Owner'
+      : level === 'subowner'
+        ? '🛡️ SubOwner (acceso total)'
+        : '👤 Usuario'
 
     const lines = [
       '🪪 *Tu identidad en Nero*',
@@ -149,6 +155,7 @@ export const idCommand = {
       `LID: ${lid || 'WhatsApp no lo entregó en este mensaje'}`,
       `Número/JID: ${phone ? `${phone}@s.whatsapp.net` : 'No se pudo resolver'}`,
       `Sender detectado: ${ctx.sender || 'desconocido'}`,
+      `Rol detectado: ${role}`,
       '',
       'Para registrar un SubOwner por LID, copia los dígitos anteriores a *@lid*.'
     ]
