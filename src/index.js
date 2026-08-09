@@ -18,7 +18,7 @@ import { startGachaScheduler } from './commands/gacha.js'
 import { getPermissionLevel, isOwner, isStaff, isSubOwner } from './lib/permissions.js'
 import { moderateIncoming } from './lib/nsfwGuard.js'
 import { getGroup } from './lib/groupStore.js'
-import { rememberError } from './lib/errorReports.js'
+import { recordCommandError, commandErrorMessage } from './lib/commandErrors.js'
 import { consumeSubbotEvents } from './lib/subbotEvents.js'
 import { sendInteractive, copyButton } from './lib/interactive.js'
 import { getInstanceMode, privateCommandsAllowed } from './lib/modeStore.js'
@@ -546,9 +546,17 @@ async function startNeroBot() {
         const chat = resolveChatJid(msg)
         const sender = await resolveSenderIdentity(sock, msg, chat).catch(() => resolveSenderJid(msg))
         const commandText = extractText(msg.message || {})
-        const code = rememberError({ sender, chat, command: commandText.split(/\s+/)[0] || '', error, instanceType: 'principal' })
+        const code = recordCommandError({
+          sender,
+          chat,
+          text: commandText,
+          error,
+          instanceType: 'principal'
+        })
         if (chat) {
-          await sock.sendMessage(chat, { text: `❌ Ocurrió un error al ejecutar el comando.\n\nCódigo: *${code}*\nPara reportarlo usa: *.reportar <motivo>*` }, { quoted: msg }).catch(() => {})
+          await sock.sendMessage(chat, {
+            text: commandErrorMessage(code)
+          }, { quoted: msg }).catch(() => {})
         }
       }
     }

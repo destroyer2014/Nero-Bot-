@@ -10,6 +10,7 @@ import { animeCommands } from './anime.js'
 import { ownerCommands } from './owner.js'
 import { safeOwnerCommands } from './owner-safe.js'
 import { reportCommand } from './report.js'
+import { supportCommand } from './support.js'
 import { subbotCommands } from './subbots.js'
 import { identityCommands } from './identity.js'
 import { modeCommands } from './mode.js'
@@ -36,6 +37,7 @@ const commands = [
   ...gameCommands,
   ...salesCommands,
   reportCommand,
+  supportCommand,
   ...modeCommands,
   ...favoriteCommands,
   ...reactionCommands,

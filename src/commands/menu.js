@@ -207,7 +207,8 @@ const sections = [
   {
     title: '📨 SOPORTE',
     entries: [
-      ['.reportar <motivo>', 'Envía un reporte al equipo.']
+      ['.reportar [motivo]', 'Envía un reporte al equipo; sin motivo usa tu último error.'],
+      ['.soporte', 'Muestra Owners y contactos oficiales de soporte.']
     ]
   },
   {

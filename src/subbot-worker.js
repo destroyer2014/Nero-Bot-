@@ -35,6 +35,7 @@ import {
 import { moderateIncoming } from './lib/nsfwGuard.js'
 import { getSubbotConfig, watchSubbotConfig } from './lib/subbotConfigStore.js'
 import { shouldHandleGroup } from './lib/instanceRouter.js'
+import { recordCommandError, commandErrorMessage } from './lib/commandErrors.js'
 
 const args = process.argv.slice(2)
 const arg = name => {
@@ -44,6 +45,7 @@ const arg = name => {
 
 const id = arg('--id')
 const phone = arg('--phone') || id
+const pairingRequestId = arg('--pairing-request-id') || ''
 
 if (!id || !phone) throw new Error('Faltan --id y --phone')
 
@@ -94,6 +96,9 @@ async function pausePairing(reason, statusCode = null) {
     id,
     phone,
     status: 'pairing-paused',
+    pairingCode: null,
+    pairingCodeAt: null,
+    pairingRequestId: pairingRequestId || null,
     pairingPausedAt: Date.now(),
     lastDisconnectCode: statusCode || null,
     lastDisconnectReason: reason
@@ -374,6 +379,17 @@ async function cleanup(reason = 'sesión cerrada') {
 async function start() {
   const { state, saveCreds } = await useMultiFileAuthState(sessionPath)
   const needsPairing = !state.creds.registered
+
+  if (needsPairing) {
+    upsertSubbot({
+      id,
+      phone,
+      status: 'pairing-starting',
+      pairingCode: null,
+      pairingCodeAt: null,
+      pairingRequestId: pairingRequestId || null
+    })
+  }
   const { version } = await fetchLatestBaileysVersion()
 
   const sock = makeWASocket({
@@ -412,6 +428,9 @@ async function start() {
         id,
         phone,
         status: 'connected',
+        pairingCode: null,
+        pairingCodeAt: null,
+        pairingRequestId: null,
         connectedAt: Date.now(),
         jid: sock.user?.id,
         platform: 'Desconocido'
@@ -479,11 +498,14 @@ async function start() {
 
       console.log(`[SUBBOT_PAIRING_CODE] ${id} ${webPairingCode}`)
 
+      const pairingCodeAt = Date.now()
       upsertSubbot({
         id,
         phone,
         status: 'pairing',
-        pairingCodeAt: Date.now()
+        pairingCode: webPairingCode,
+        pairingCodeAt,
+        pairingRequestId: pairingRequestId || null
       })
 
       const entry = getSubbot(id)
@@ -649,8 +671,18 @@ async function start() {
           packAuthor: runtimeConfig.packAuthor
         })
       } catch (error) {
-        await sock.sendMessage(msg.key.remoteJid, {
-          text: `❌ Error: ${error.message}\n\nUsa *.reportar <motivo>* para reportarlo.`
+        console.error('[SUBBOT COMMAND ERROR]', error)
+        const chat = msg.key.remoteJid
+        const commandText = extractText(msg.message || {})
+        const code = recordCommandError({
+          sender,
+          chat,
+          text: commandText,
+          error,
+          instanceType: 'subbot'
+        })
+        await sock.sendMessage(chat, {
+          text: commandErrorMessage(code)
         }, { quoted: msg }).catch(() => {})
       }
     }

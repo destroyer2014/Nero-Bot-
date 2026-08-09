@@ -6,6 +6,7 @@ import { formatBytes, formatDuration, isLikelyUrl, pickDownloadUrl, sendImageAlb
 import { cancelUserJobs, clearWaitingQueues, formatQueueStatus, runDownloadJob } from '../lib/downloadQueue.js'
 import { getSelection, saveSelection } from '../lib/selectionCache.js'
 import { sendLargeVideoAsDocuments } from '../lib/largeMedia.js'
+import { recordCommandError, commandErrorMessage } from '../lib/commandErrors.js'
 import sharp from 'sharp'
 import Webpmux from 'node-webpmux'
 import fs from 'node:fs/promises'
@@ -61,8 +62,16 @@ async function apiTask(ctx, fn) {
   try { await fn() ; await react(ctx.sock, ctx.msg, '✅') }
   catch (error) {
     console.error('Error en descarga:', error)
-    const message = error instanceof ApiError ? error.message : (error?.message || 'No se pudo completar la descarga.')
-    await ctx.sock.sendMessage(ctx.chat, { text: `❌ ${message}` }, { quoted: ctx.msg })
+    const code = recordCommandError({
+      sender: ctx.sender,
+      chat: ctx.chat,
+      text: ctx.text,
+      error,
+      instanceType: ctx.instanceType || 'principal'
+    })
+    await ctx.sock.sendMessage(ctx.chat, {
+      text: commandErrorMessage(code)
+    }, { quoted: ctx.msg })
     await react(ctx.sock, ctx.msg, '❌')
   }
 }
