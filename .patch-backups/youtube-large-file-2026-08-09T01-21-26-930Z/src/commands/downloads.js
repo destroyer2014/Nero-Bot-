@@ -5,7 +5,6 @@ import { enviarCarrusel } from '../lib/uiBuilder.js'
 import { formatBytes, formatDuration, isLikelyUrl, pickDownloadUrl, sendImageAlbum, sendRemoteMedia } from '../lib/media.js'
 import { cancelUserJobs, clearWaitingQueues, formatQueueStatus, runDownloadJob } from '../lib/downloadQueue.js'
 import { getSelection, saveSelection } from '../lib/selectionCache.js'
-import { sendLargeVideoAsDocuments } from '../lib/largeMedia.js'
 import sharp from 'sharp'
 import Webpmux from 'node-webpmux'
 import fs from 'node:fs/promises'
@@ -109,22 +108,9 @@ export const ytmp3={name:'ytmp3',aliases:['ytaudio'],async execute(ctx){return a
   const url=ctx.args[0]; if(!isLikelyUrl(url)) throw new Error(usage('ytmp3','<enlace de YouTube>'))
   await runDownloadJob(ctx,'light','.ytmp3',()=>directMedia(ctx,'/ytmp3',{mode:'link',url},(d)=>`🎵 *${d.title||'Audio de YouTube'}*\n📦 ${d.size_mb?`${d.size_mb} MB`:'Tamaño no disponible'}\n🎧 ${d.quality||'M4A'}`))
 })}}
-function youtubeMediaData(data={}){const nested=data.selected||data.result||data.primary_media||data.results?.[0]||{};return {...data,...nested,selected:data.selected,result:data.result,results:data.results}}
-function youtubeMediaSizeBytes(item={}){const b=Number(item.size_bytes||item.filesize_bytes||item.content_length||0);if(b>0)return b;const mb=Number(item.size_mb||item.filesize_mb||0);return mb>0?Math.round(mb*1024*1024):0}
-function youtubeMediaDuration(item={}){const n=Number(item.duration_seconds||item.duration_sec||0);if(n>0)return n;const raw=String(item.duration||'');if(!raw.includes(':'))return 0;const p=raw.split(':').map(Number);if(p.some(v=>!Number.isFinite(v)))return 0;return p.length===3?p[0]*3600+p[1]*60+p[2]:p.length===2?p[0]*60+p[1]:0}
-async function prepareYoutubeVideo(url,quality){let lastError;for(let attempt=1;attempt<=3;attempt++){try{const data=await apiGet('/ytmp4',{mode:'link',url,quality},{timeoutMs:300000});const item=youtubeMediaData(data);if(pickDownloadUrl(item))return {data,item};lastError=new Error('La API todavía no entregó un enlace de descarga.')}catch(e){lastError=e}if(attempt<3)await new Promise(r=>setTimeout(r,2500*attempt))}throw lastError||new Error('No se pudo preparar el video de YouTube.')}
-async function downloadYoutubeVideo(ctx,url,quality){
-  const {data,item}=await prepareYoutubeVideo(url,quality);const downloadUrl=pickDownloadUrl(item);if(!downloadUrl)throw new Error('YouTube no entregó un enlace descargable.')
-  const title=data.title||item.title||'Video de YouTube',filename=item.filename||item.file_name||`${title}.mp4`,duration=youtubeMediaDuration(item),size=youtubeMediaSizeBytes(item)
-  const caption=[`🎬 *${title}*`,`📺 Calidad: ${data.quality||item.quality||quality}`,duration?`⏱️ Duración: ${formatDuration(duration)}`:'',size?`📦 Tamaño: ${formatBytes(size)}`:''].filter(Boolean).join('\n')
-  const long=duration>=3600,large=size>Number(config.maxUploadBytes||0);let reason=long?'el video dura una hora o más':large?'el archivo supera el tamaño del envío normal':''
-  if(!reason){try{await sendRemoteMedia(ctx.sock,ctx.chat,item,{quoted:ctx.msg,caption});return}catch(e){console.warn('[YTMP4] envío normal falló; usando documento:',e?.message||e);reason='WhatsApp no pudo subirlo como video normal'}}
-  await ctx.sock.sendMessage(ctx.chat,{text:['⚠️ *Este video no se puede enviar de forma normal.*',`Motivo: ${reason}.`,'','📦 Nero lo descargará al VPS y lo enviará como *archivo MP4*.','🧩 Si supera el límite por archivo, se dividirá automáticamente en varias partes.','⏳ Esta operación permanece dentro de la *cola de descarga pesada*.'].join('\n')},{quoted:ctx.msg}).catch(()=>{})
-  await sendLargeVideoAsDocuments(ctx.sock,ctx.chat,{url:downloadUrl,title,filename,caption,quoted:ctx.msg})
-}
 export const ytmp4={name:'ytmp4',aliases:['ytvideo'],async execute(ctx){return apiTask(ctx,async()=>{
   const url=ctx.args[0]; const quality=ctx.args[1]||'360p'; if(!isLikelyUrl(url)) throw new Error(usage('ytmp4','<enlace> [360p]'))
-  await runDownloadJob(ctx,'heavy','.ytmp4',()=>downloadYoutubeVideo(ctx,url,quality))
+  await runDownloadJob(ctx,'heavy','.ytmp4',()=>directMedia(ctx,'/ytmp4',{mode:'link',url,quality},d=>`🎬 *${d.title||'Video de YouTube'}*\n📺 Calidad: ${d.quality||quality}`))
 })}}
 
 export const spotify={name:'spotify',aliases:['sp'],async execute(ctx){return apiTask(ctx,async()=>{
