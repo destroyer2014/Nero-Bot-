@@ -236,7 +236,29 @@ export const command = {
     const { date, time } = formatDateTime(config.timezone)
     const digits = jidToNumber(sender)
     const mention = `@${digits}`
-    const greetingNumber = digits ? `+${digits}` : 'usuario'
+
+    const localHour = Number(
+      new Intl.DateTimeFormat('en-GB', {
+        timeZone: config.timezone,
+        hour: '2-digit',
+        hour12: false
+      }).format(new Date())
+    )
+
+    const greeting = localHour >= 5 && localHour < 12
+      ? {
+          hello: 'buenos días 🌤',
+          wish: 'espero que tengas un lindo día'
+        }
+      : localHour >= 12 && localHour < 19
+        ? {
+            hello: 'buenas tardes ☀️',
+            wish: 'espero que tengas una linda tarde'
+          }
+        : {
+            hello: 'buenas noches 🌙',
+            wish: 'espero que tengas una linda noche'
+          }
 
     const uptime = Math.floor(process.uptime())
     const hours = Math.floor(uptime / 3600)
@@ -254,7 +276,7 @@ export const command = {
     const header = [
       '*︶꒦꒷☆꒷꒦︶꒦꒷☆꒷꒦︶꒦꒷☆꒷꒦︶꒦꒷☆꒷꒦︶*',
       '',
-      `𑁯 “ Hola *${greetingNumber}* soy *${displayBotName}*, espero que tengas un lindo día 🌤 ” ᰍ`,
+      `𑁯 “ Hola *${mention}*, ${greeting.hello}; soy *${displayBotName}*, ${greeting.wish} ” ᰍ`,
       '',
       '︵ׄ⏜︵ׄ⠑ ⏜ 𓊈  ⭐  𓊉 ⏜ ⠊︵ֺ⏜︵ֺ',
       `ׂ ✦ *Usuario:* ${mention}`,
