@@ -690,7 +690,7 @@ async function start() {
           instanceType: 'subbot'
         })
         await sock.sendMessage(chat, {
-          text: commandErrorMessage(code)
+          text: commandErrorMessage(code, error)
         }, { quoted: msg }).catch(() => {})
       }
     }

@@ -7,274 +7,327 @@ import { formatDateTime, jidToNumber } from '../lib/format.js'
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const projectRoot = path.resolve(__dirname, '../..')
 
-const item = (command, description) =>
-  [`✦ *${command}*`, `> ✐ ${description}`].join('\n')
-
-const section = (title, entries) =>
-  [
-    `✦════ < ${title} > ════⚝`,
-    '',
-    ...entries.flatMap(entry => [item(...entry), ''])
-  ].join('\n').trimEnd()
-
-const sections = [
-  {
-    title: '🔎 BÚSQUEDAS',
+const categories = {
+  busqueda: {
+    title: '🔎 MENU BÚSQUEDA',
+    description: 'Buscadores, música e información.',
     entries: [
-      ['.play <búsqueda>', 'Busca en YouTube con lista seleccionable.'],
-      ['.tts • .tiktoks <búsqueda>', 'Busca videos de TikTok con lista seleccionable.'],
-      ['.spotify <búsqueda>', 'Busca canciones de Spotify.'],
-      ['.ytmusic <búsqueda>', 'Busca música en YouTube Music.'],
-      ['.applemusic <búsqueda o url>', 'Busca y descarga música de Apple Music.'],
-      ['.bingimg <búsqueda>', 'Busca imágenes en Bing.'],
-      ['.gif • .tenor <búsqueda>', 'Busca GIFs y videos cortos.'],
-      ['.npm <paquete>', 'Consulta información de un paquete NPM.'],
-      ['.googleimages <búsqueda>', 'Busca imágenes en Google.'],
-      ['.wikipedia • .wiki <consulta>', 'Busca información en Wikipedia.'],
-      ['.dni <8 dígitos>', 'Consulta nombres y código de verificación de un DNI peruano.'],
-      ['.ruc <11 dígitos>', 'Consulta datos públicos de una empresa por RUC.']
+      '.play <nombre>',
+      '.tts <búsqueda>',
+      '.spotify <búsqueda>',
+      '.ytmusic <búsqueda>',
+      '.applemusic <búsqueda>',
+      '.bingimg <búsqueda>',
+      '.gif <búsqueda>',
+      '.wikipedia <consulta>',
+      '.npm <paquete>',
+      '.dni <8 dígitos>',
+      '.ruc <11 dígitos>'
     ]
   },
-  {
-    title: '📥 DESCARGAS',
+  descargas: {
+    title: '📥 MENU DESCARGAS',
+    description: 'Descargas multimedia y archivos.',
     entries: [
-      ['.tiktok • .tt <url>', 'Descarga videos de TikTok.'],
-      ['.ttimg <url>', 'Descarga fotos de TikTok.'],
-      ['.ttmp3 <url>', 'Descarga audio de TikTok.'],
-      ['.ytmp3 <url>', 'Descarga audio de YouTube.'],
-      ['.ytmp4 <url>', 'Descarga video de YouTube; usa archivo/partes si es pesado.'],
-      ['.facebook • .fb <url>', 'Descarga contenido de Facebook.'],
-      ['.twitter • .x <url>', 'Descarga contenido de Twitter/X.'],
-      ['.instagram • .ig <url>', 'Descarga contenido de Instagram.'],
-      ['.reddit <url>', 'Descarga contenido multimedia de Reddit.'],
-      ['.bilibili • .bili <url>', 'Descarga videos de Bilibili.'],
-      ['.threads <url>', 'Descarga imágenes y videos de Threads.'],
-      ['.mediafire • .mf <url>', 'Descarga archivos de MediaFire.'],
-      ['.mega • .meganz <url>', 'Descarga archivos de Mega.nz.'],
-      ['.terabox • .tera <url>', 'Descarga archivos de Terabox.'],
-      ['.gitclone <url>', 'Descarga repositorios de GitHub.'],
-      ['.npmdl <paquete>', 'Descarga paquetes NPM.']
+      '.ytmp3 <url>',
+      '.ytmp4 <url> [calidad]',
+      '.tiktok <url>',
+      '.ttimg <url>',
+      '.ttmp3 <url>',
+      '.facebook <url>',
+      '.instagram <url>',
+      '.twitter <url>',
+      '.reddit <url>',
+      '.threads <url>',
+      '.bilibili <url>',
+      '.mediafire <url>',
+      '.mega <url>',
+      '.terabox <url>',
+      '.gitclone <url>',
+      '.npmdl <paquete>'
     ]
   },
-  {
-    title: '🎮 JUEGOS Y DIVERSIÓN',
+  juegos: {
+    title: '🎮 MENU JUEGOS',
+    description: 'Juegos y diversión para grupos.',
     entries: [
-      ['.ttt [@usuario]', 'Tres en raya; sin mención elige rival del grupo.'],
-      ['.movie', 'Inicia Adivina la película con emojis.'],
-      ['.movie <respuesta>', 'Intenta responder la película activa.'],
-      ['.pareja [@usuario] [@usuario]', 'Calcula compatibilidad; sin menciones elige una pareja aleatoria.'],
-      ['.testgay [@usuario]', 'Test meme aleatorio; sin mención elige a alguien del grupo.'],
-      ['.ppt piedra|papel|tijera', 'Juega piedra, papel o tijera contra Nero.'],
-      ['.dado', 'Lanza un dado.'],
-      ['.moneda', 'Lanza una moneda.']
+      '.ttt [@usuario]',
+      '.movie',
+      '.pareja [@usuario]',
+      '.testgay [@usuario]',
+      '.ppt piedra|papel|tijera',
+      '.dado',
+      '.moneda'
     ]
   },
-  {
-    title: '🖼️ STICKERS',
+  stickers: {
+    title: '🖼️ MENU STICKERS',
+    description: 'Creación y edición de stickers.',
     entries: [
-      ['.menusticker', 'Muestra el menú completo de stickers.'],
-      ['.s • .sticker', 'Crea un sticker desde imagen o video corto.'],
-      ['.setmeta Pack|Autor', 'Guarda tus metadatos personales de sticker.'],
-      ['.delmeta', 'Elimina tus metadatos personales.'],
-      ['.pfp • .getpic', 'Obtiene la foto de perfil de un usuario.'],
-      ['.qc', 'Crea un sticker tipo quote desde un mensaje citado.'],
-      ['.toimg • .img', 'Convierte un sticker en imagen.'],
-      ['.brat • .ttp <texto>', 'Crea un sticker estático de texto.'],
-      ['.attp <texto>', 'Crea un sticker animado de texto.'],
-      ['.emojimix 😀 😍', 'Mezcla dos emojis en un sticker.'],
-      ['.wm Pack|Autor', 'Cambia el pack/autor de un sticker existente.'],
-      ['.textosticker • .tstk <texto>', 'Crea un sticker de texto local.'],
-      ['.setpack <nombre>', 'Cambia el nombre global del paquete.'],
-      ['.setauthor <autor>', 'Cambia el autor global del paquete.'],
-      ['.stickermeta', 'Consulta los metadatos de stickers.'],
-      ['.stickersearch <búsqueda>', 'Busca paquetes de stickers.']
+      '.menusticker',
+      '.s',
+      '.qc',
+      '.toimg',
+      '.brat <texto>',
+      '.attp <texto>',
+      '.emojimix 😀 😍',
+      '.wm Pack|Autor',
+      '.setmeta Pack|Autor'
     ]
   },
-  {
-    title: '🧩 GENERADORES',
+  utilidades: {
+    title: '🛠️ MENU UTILIDADES',
+    description: 'Herramientas y diagnóstico.',
     entries: [
-      ['.animatedgif triggered|blink', 'Crea un GIF animado desde una imagen.'],
-      ['.filtro', 'Muestra filtros seleccionables para una imagen.'],
-      ['.textogif • .textgif <texto>', 'Genera un GIF animado de texto.'],
-      ['.textoimagen • .textimg <texto>', 'Genera una imagen con texto.']
+      '.ping',
+      '.speedtest',
+      '.server',
+      '.ocr',
+      '.shazam',
+      '.acortar <url>',
+      '.hostinfo <dominio>',
+      '.qr <texto>',
+      '.traducir <idioma> <texto>',
+      '.ssweb <url>',
+      '.hd',
+      '.removebg',
+      '.transcribir'
     ]
   },
-  {
-    title: '🛠️ UTILIDADES',
+  anime: {
+    title: '🌸 MENU ANIME',
+    description: 'Anime, reacciones y contenido visual.',
     entries: [
-      ['.server • .serverinfo', 'Muestra el estado público del servidor de Nero.'],
-      ['.ocr', 'Extrae texto de una imagen.'],
-      ['.shazam • .whatmusic', 'Identifica música en audio o video.'],
-      ['.acortar <url> [alias]', 'Acorta enlaces.'],
-      ['.hostinfo <dominio>', 'Consulta información pública de un host.'],
-      ['.minecraft <host> [edición]', 'Consulta un servidor Minecraft.'],
-      ['.npmfull <paquete>', 'Envía la respuesta completa de NPM en JSON.'],
-      ['.qr <texto>', 'Genera un código QR.'],
-      ['.traducir <idioma> <texto>', 'Traduce textos.'],
-      ['.ssweb <url>', 'Captura una página web.'],
-      ['.hd • .upscale', 'Mejora imágenes.'],
-      ['.removebg', 'Elimina el fondo de una imagen.'],
-      ['.transcribir', 'Transcribe audio o video.']
+      '.reacciones',
+      '.animereacciones',
+      '.ar <tipo> [@usuario]',
+      '.girls random|sexy|asian',
+      '.animenews',
+      '.animeschedule'
     ]
   },
-  {
-    title: '🌸 ANIME Y REACCIONES',
+  gacha: {
+    title: '🎴 MENU GACHA',
+    description: 'Colección, economía y combates.',
     entries: [
-      ['.reacciones', 'Muestra las reacciones normales.'],
-      ['.animereacciones', 'Muestra las reacciones anime de EvoGB.'],
-      ['.ar <tipo> [@usuario]', 'Envía una reacción anime.'],
-      ['.girls random|sexy|asian', 'Envía una imagen SFW de la categoría.'],
-      ['.animenews', 'Muestra noticias de anime.'],
-      ['.animeschedule', 'Muestra el calendario de anime.']
+      '.w',
+      '.claim',
+      '.harem',
+      '.character <nombre>',
+      '.wish <personaje>',
+      '.balance',
+      '.daily',
+      '.trade @usuario',
+      '.market',
+      '.battle',
+      '.gachainfo'
     ]
   },
-  {
-    title: '🔎 STALKING PÚBLICO',
+  grupos: {
+    title: '🛡️ MENU GRUPOS',
+    description: 'Administración y seguridad de grupos.',
     entries: [
-      ['.githubstalk <usuario>', 'Consulta información pública de GitHub.'],
-      ['.instagramstalk <usuario>', 'Consulta información pública de Instagram.'],
-      ['.robloxstalk <usuario>', 'Consulta información pública de Roblox.'],
-      ['.telegramstalk <canal>', 'Consulta información pública de Telegram.'],
-      ['.tiktokstalk <usuario>', 'Consulta información pública de TikTok.']
+      '.antilink on|off',
+      '.antinsfw on|off',
+      '.bienvenida on|off',
+      '.despedida on|off',
+      '.setbienvenida <texto>',
+      '.setdespedida <texto>',
+      '.setimgbienvenida',
+      '.setimgdespedida',
+      '.warn / .warns / .resetwarn',
+      '.promote / .demote / .kick',
+      '.abrir / .cerrar',
+      '.tagall / .hidetag',
+      '.del',
+      '.groupconfig'
     ]
   },
-  {
-    title: '🔞 NSFW',
+  subbots: {
+    title: '🤖 MENU SUBBOTS',
+    description: 'Vinculación y control de instancias.',
     entries: [
-      ['.nsfwmenu', 'Muestra la sección adulta habilitada.'],
-      ['.nsfwactivar on|off', 'Activa o desactiva comandos adultos en el grupo.'],
-      ['.ph <búsqueda>', 'Busca videos en Pornhub.'],
-      ['.xnxxsearch <búsqueda>', 'Busca videos en XNXX con lista seleccionable.'],
-      ['.xvideossearch <búsqueda>', 'Busca videos en XVideos con lista seleccionable.']
+      '.code',
+      '.bots',
+      '.setbot  — admins del grupo',
+      '.principal',
+      '.resetprincipal  — admins del grupo',
+      '.modo  — Owner/SubOwner',
+      '.logout',
+      '.delsubbot <número>  — Owner/SubOwner',
+      '.delsubbotsrojos  — Owner/SubOwner'
     ]
   },
-  {
-    title: '🎴 GACHA',
+  ia: {
+    title: '🤖 MENU IA',
+    description: 'Inteligencia artificial.',
     entries: [
-      ['.w', 'Genera un personaje con su imagen para reclamar.'],
-      ['.claim • .c', 'Reclama la aparición activa.'],
-      ['.harem • .collection', 'Muestra tu colección.'],
-      ['.character • .char <nombre/id>', 'Muestra la ficha de un personaje.'],
-      ['.wish <personaje>', 'Añade un personaje a tu wishlist.'],
-      ['.balance • .bal • .wallet', 'Consulta monedas, tickets y patrimonio.'],
-      ['.daily', 'Recompensa diaria.'],
-      ['.trade @usuario', 'Inicia un intercambio.'],
-      ['.market', 'Muestra el mercado global.'],
-      ['.battle', 'Combate PvE con tu equipo.'],
-      ['.gachastats', 'Muestra tus estadísticas.'],
-      ['.topgacha', 'Ranking general del Gacha.'],
-      ['.gachaprofile', 'Muestra tu perfil Gacha.'],
-      ['.gachainfo', 'Muestra TODOS los comandos Gacha.']
+      '.ia <consulta>',
+      '.gemini <consulta>',
+      '.bot (responder mensaje)',
+      '.imgprompt',
+      '.editimg'
     ]
   },
-  {
-    title: '🛡️ GRUPOS Y SEGURIDAD',
+  soporte: {
+    title: '📨 MENU SOPORTE',
+    description: 'Ayuda y reportes.',
     entries: [
-      ['.antinsfw on|off', 'Activa o desactiva el detector NSFW.'],
-      ['.antilink on|off', 'AntiLink global: borra enlaces y expulsa usuarios no administradores.'],
-      ['.warn • .warns • .resetwarn', 'Administra advertencias.'],
-      ['.bienvenida • .despedida', 'Configura entradas y salidas.'],
-      ['.setimgbienvenida • .setimgdespedida', 'Configura imágenes de bienvenida/despedida.'],
-      ['.promote • .demote • .kick', 'Administra participantes.'],
-      ['.abrir • .cerrar', 'Abre o cierra el grupo.'],
-      ['.tagall', 'Menciona a todos visiblemente.'],
-      ['.hidetag <mensaje>', 'Menciona ocultamente a todos.'],
-      ['.hidetagall', 'Reenvía un mensaje citado con mención oculta a todos.'],
-      ['.del', 'Elimina un mensaje citado (admins).']
+      '.soporte',
+      '.reportar [motivo]'
     ]
   },
-  {
-    title: '🤖 SUBBOTS',
+  nsfw: {
+    title: '🔞 MENU NSFW',
+    description: 'Contenido adulto controlado por grupo.',
     entries: [
-      ['.code', 'Genera un código de vinculación.'],
-      ['.bots', 'Muestra subbots conectados.'],
-      ['.setbot', 'Selecciona la instancia del grupo (Owner/SubOwner).'],
-      ['.principal', 'Consulta la instancia elegida.'],
-      ['.resetprincipal', 'Vuelve a selección automática (Owner/SubOwner).'],
-      ['.logout', 'Cierra la sesión del subbot.'],
-      ['.modo', 'Configura grupos/privados (Owner/SubOwner).']
+      '.nsfwmenu',
+      '.nsfwactivar on|off',
+      '.ph <búsqueda>',
+      '.xnxxsearch <búsqueda>',
+      '.xvideossearch <búsqueda>'
     ]
   },
-  {
-    title: '🤖 INTELIGENCIA ARTIFICIAL',
+  owner: {
+    title: '👑 MENU OWNER',
+    description: 'Herramientas protegidas.',
     entries: [
-      ['.ia • .gemini', 'Conversa con IA.'],
-      ['.bot', 'Analiza un mensaje citado.'],
-      ['.imgprompt', 'Describe una imagen.'],
-      ['.editimg', 'Edita una imagen con IA.']
-    ]
-  },
-  {
-    title: '📨 SOPORTE',
-    entries: [
-      ['.reportar [motivo]', 'Envía un reporte al equipo; sin motivo usa tu último error.'],
-      ['.soporte', 'Muestra Owners y contactos oficiales de soporte.']
-    ]
-  },
-  {
-    title: '👑 OWNER / SUBOWNER',
-    entries: [
-      ['.vv', 'Recupera contenido de una visualización.'],
-      ['.ownerinfo', 'Muestra información del Owner.'],
-      ['.restart', 'Reinicia Nero.']
+      '.vv',
+      '.ownerinfo',
+      '.restart',
+      '.modo',
+      '.delsubbot <número>',
+      '.delsubbotsrojos'
     ]
   }
-]
+}
+
+const aliases = {
+  búsquedas: 'busqueda',
+  busquedas: 'busqueda',
+  búsqueda: 'busqueda',
+  descargas: 'descargas',
+  descarga: 'descargas',
+  juego: 'juegos',
+  sticker: 'stickers',
+  utilidad: 'utilidades',
+  grupo: 'grupos',
+  subbot: 'subbots',
+  inteligencia: 'ia',
+  ayuda: 'soporte'
+}
+
+function uptimeText() {
+  let seconds = Math.max(0, Math.floor(process.uptime()))
+  const days = Math.floor(seconds / 86400)
+  seconds %= 86400
+  const hours = Math.floor(seconds / 3600)
+  seconds %= 3600
+  const minutes = Math.floor(seconds / 60)
+  return `${days ? `${days} d ` : ''}${hours} h ${minutes} min`
+}
+
+function greetingForTimezone() {
+  const hour = Number(new Intl.DateTimeFormat('en-GB', {
+    timeZone: config.timezone,
+    hour: '2-digit',
+    hour12: false
+  }).format(new Date()))
+
+  if (hour >= 5 && hour < 12) {
+    return { hello: 'buenos días 🌤', wish: 'espero que tengas un lindo día' }
+  }
+  if (hour >= 12 && hour < 19) {
+    return { hello: 'buenas tardes ☀️', wish: 'espero que tengas una linda tarde' }
+  }
+  return { hello: 'buenas noches 🌙', wish: 'espero que tengas una linda noche' }
+}
+
+function categoryBody(category, prefix) {
+  return [
+    `╭─• ˚₊‧ ✦ *${category.title}* ‧₊˚ •─╮`,
+    '┆',
+    `┆ > ✐ ${category.description}`,
+    '┆',
+    ...category.entries.map(entry => `┆ ✦ *${entry.replace(/^\./, prefix)}*`),
+    '┆',
+    `┆ ↩ Volver: *${prefix}menu*`,
+    '╰─── •·:*¨༺ ♱ ✦ ♱ ༻¨*:·• ───╯',
+    '',
+    '> Nero Bot™ | © ArcadiaCorps'
+  ].join('\n')
+}
+
+function categoryList(prefix) {
+  const rows = [
+    ['BUSQUEDA', 'busqueda', 'Buscadores e información'],
+    ['DESCARGAS', 'descargas', 'Multimedia y archivos'],
+    ['JUEGOS', 'juegos', 'Diversión para grupos'],
+    ['STICKERS', 'stickers', 'Creación y edición'],
+    ['UTILIDADES', 'utilidades', 'Ping, Speedtest y herramientas'],
+    ['ANIME', 'anime', 'Anime y reacciones'],
+    ['GACHA', 'gacha', 'Colección y economía'],
+    ['GRUPOS', 'grupos', 'Administración y seguridad'],
+    ['SUBBOTS', 'subbots', 'Instancias de Nero'],
+    ['IA', 'ia', 'Inteligencia artificial'],
+    ['SOPORTE', 'soporte', 'Ayuda y reportes'],
+    ['NSFW', 'nsfw', 'Sección adulta'],
+    ['OWNER', 'owner', 'Herramientas protegidas']
+  ]
+
+  return rows.flatMap(([title, key, description]) => [
+    `┆ ╰┈➤ *MENU ${title}*`,
+    `┆ > ✐ ${description} — *${prefix}menu ${key}*`,
+    '┆'
+  ])
+}
 
 export const command = {
   name: 'menu',
   aliases: ['help', 'comandos'],
-  description: 'Muestra todos los comandos.',
+  description: 'Muestra el menú principal o una categoría.',
+
   async execute({
     sock,
     msg,
     chat,
     sender,
+    args = [],
     instanceType,
     botName,
-    subbotConfig
+    subbotConfig,
+    prefix
   }) {
+    const activePrefix = prefix || subbotConfig?.prefix || config.prefix
+    const requestedRaw = String(args[0] || '').toLowerCase().trim()
+    const requested = aliases[requestedRaw] || requestedRaw
+
+    if (requested) {
+      const category = categories[requested]
+      if (!category) {
+        await sock.sendMessage(chat, {
+          text: `❌ Menú no encontrado. Usa *${activePrefix}menu* para ver las categorías.`
+        }, { quoted: msg })
+        return
+      }
+
+      await sock.sendMessage(chat, {
+        text: categoryBody(category, activePrefix)
+      }, { quoted: msg })
+      return
+    }
+
     const { date, time } = formatDateTime(config.timezone)
     const digits = jidToNumber(sender)
     const mention = `@${digits}`
-
-    const localHour = Number(
-      new Intl.DateTimeFormat('en-GB', {
-        timeZone: config.timezone,
-        hour: '2-digit',
-        hour12: false
-      }).format(new Date())
-    )
-
-    const greeting = localHour >= 5 && localHour < 12
-      ? {
-          hello: 'buenos días 🌤',
-          wish: 'espero que tengas un lindo día'
-        }
-      : localHour >= 12 && localHour < 19
-        ? {
-            hello: 'buenas tardes ☀️',
-            wish: 'espero que tengas una linda tarde'
-          }
-        : {
-            hello: 'buenas noches 🌙',
-            wish: 'espero que tengas una linda noche'
-          }
-
-    const uptime = Math.floor(process.uptime())
-    const hours = Math.floor(uptime / 3600)
-    const minutes = Math.floor((uptime % 3600) / 60)
-
-    const isSubbot =
-      instanceType === 'subbot' ||
-      config.instanceType === 'subbot'
-
+    const greeting = greetingForTimezone()
+    const isSubbot = instanceType === 'subbot' || config.instanceType === 'subbot'
     const type = isSubbot ? 'Subbot' : 'Bot principal'
     const displayBotName = isSubbot
       ? (botName || subbotConfig?.botName || config.botName)
       : config.botName
 
-    const header = [
+    const body = [
       '*︶꒦꒷☆꒷꒦︶꒦꒷☆꒷꒦︶꒦꒷☆꒷꒦︶꒦꒷☆꒷꒦︶*',
       '',
       `𑁯 “ Hola *${mention}*, ${greeting.hello}; soy *${displayBotName}*, ${greeting.wish} ” ᰍ`,
@@ -284,42 +337,23 @@ export const command = {
       `✦ *Creador:* ${config.creator}`,
       `✦ *Versión:* ${config.version}`,
       `✦ *Instancia:* ${type}`,
-      `✦ *Tiempo activo:* ${hours} h ${minutes} min`,
+      `✦ *Tiempo activo:* ${uptimeText()}`,
       `✦ *Enlace:* ${config.website}`,
       `✦ *Fecha:* ${date}`,
       `✦ *Hora:* ${time}`,
-      '> Para ver comandos de administración de tu negocio usa *.salesinfo*',
-      '*─ׄ─ׅ─ׄ─⭒─ׄ─ׅ─ׄ─⭒─ׄ─ׅ─ׄ─⭒─ׄ─ׅ─ׄ─⭒─ׄ─ׅ─ׄ─*'
-    ].join('\n')
-
-    // Fuerza el "Leer más" de WhatsApp sin llenar visualmente el menú.
-    const readMore = '\u200e'.repeat(450)
-
-    const body = [
-      header,
-      readMore,
+      '',
       '*─ׄ─ׅ─ׄ─⭒ L I S T A  -  M E N Ú S ⭒─ׄ─ׅ─ׄ─*',
       '',
-      sections.map(({ title, entries }) => section(title, entries)).join('\n\n'),
+      '╭─• ˚₊‧ ✦ *NERO BOT | © ARCADIACORPS* ‧₊˚ •─╮',
+      '┆',
+      ...categoryList(activePrefix),
+      '╰─── •·:*¨༺ ♱ ✦ ♱ ༻¨*:·• ───╯',
       '',
-      '*✦════ < ✨ FIN DEL MENÚ > ════⚝*'
+      '> Nero Bot™ | © ArcadiaCorps'
     ].join('\n')
 
-    if (isSubbot && subbotConfig?.avatarUrl) {
-      try {
-        await sock.sendMessage(chat, {
-          image: { url: subbotConfig.avatarUrl },
-          caption: body,
-          mentions: [sender]
-        }, { quoted: msg })
-        return
-      } catch {}
-    }
-
     try {
-      const video = await fs.readFile(
-        path.resolve(projectRoot, config.menuVideo)
-      )
+      const video = await fs.readFile(path.resolve(projectRoot, config.menuVideo))
       await sock.sendMessage(chat, {
         video,
         gifPlayback: true,

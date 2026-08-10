@@ -15,24 +15,30 @@ function instanceLabel(ctx) {
     : 'Bot principal'
 }
 
+function activePrefix(ctx) {
+  return ctx.prefix || ctx.subbotConfig?.prefix || config.prefix
+}
+
 export const modeCommand = {
   name: 'modo',
   aliases: ['mode'],
   description: 'Configura si Nero responde también en chats privados.',
+
   async execute(ctx) {
     assertPrivileged(ctx)
 
+    const prefix = activePrefix(ctx)
     const current = getInstanceMode(ctx.instanceType, ctx.instanceId)
     const rows = [
       {
         title: 'Solo grupos',
         description: 'Ignora comandos normales en chats privados.',
-        id: `${config.prefix}modepick groups`
+        id: `${prefix}modepick groups`
       },
       {
         title: 'Grupos y privados',
         description: 'Responde comandos en grupos y chats privados.',
-        id: `${config.prefix}modepick all`
+        id: `${prefix}modepick all`
       }
     ]
 
@@ -60,8 +66,8 @@ export const modeCommand = {
         text:
           `${body}\n\n` +
           'Usa:\n' +
-          '*.modepick groups* — Solo grupos\n' +
-          '*.modepick all* — Grupos y privados'
+          `*${prefix}modepick groups* — Solo grupos\n` +
+          `*${prefix}modepick all* — Grupos y privados`
       }, { quoted: ctx.msg })
     }
   }
@@ -71,8 +77,6 @@ export const modePickCommand = {
   name: 'modepick',
   aliases: [],
   async execute(ctx) {
-    // El callback interno está protegido igual que .modo para impedir
-    // que un usuario lo escriba manualmente y salte el selector.
     assertPrivileged(ctx)
 
     const requested = String(ctx.args?.[0] || '').toLowerCase()

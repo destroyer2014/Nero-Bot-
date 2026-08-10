@@ -1,7 +1,7 @@
 {
   "name": "nero-bot",
-  "version": "1.13.4",
-  "description": "Nero Bot v1.13.4: consultas DNI/RUC con APIsPERU",
+  "version": "1.14.0",
+  "description": "Nero Bot v1.14.0: menú compacto, diagnóstico, errores claros y control de SubBots",
   "type": "module",
   "main": "src/index.js",
   "scripts": {

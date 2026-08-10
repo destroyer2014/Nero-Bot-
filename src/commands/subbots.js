@@ -4,7 +4,8 @@ import {
   canRequestCode,
   markCodeRequest,
   startSubbotProcess,
-  deleteSubbot
+  deleteSubbot,
+  deleteBrokenSubbots
 } from '../lib/subbotManager.js'
 import { setPendingSubbotPhone } from '../lib/pendingSubbotPhone.js'
 import { listSubbots, getSubbot } from '../lib/subbotRegistry.js'
@@ -28,6 +29,42 @@ function assertInstanceControl(ctx) {
   if (!['owner', 'subowner'].includes(level)) {
     throw new Error('Este comando es exclusivo para Owner y SubOwner.')
   }
+}
+
+function jidToken(value = '') {
+  return String(value || '').replace(/:\d+@/, '@').split('@')[0].split(':')[0]
+}
+
+function participantValues(participant = {}) {
+  return [
+    participant.id,
+    participant.jid,
+    participant.lid,
+    participant.phoneNumber
+  ].filter(Boolean).map(String)
+}
+
+function sameIdentity(a = '', b = '') {
+  if (!a || !b) return false
+  if (String(a) === String(b)) return true
+  return jidToken(a) === jidToken(b)
+}
+
+async function assertGroupAdmin(ctx) {
+  if (!ctx.chat.endsWith('@g.us')) {
+    throw new Error('Este comando solo funciona en grupos.')
+  }
+
+  const metadata = await ctx.sock.groupMetadata(ctx.chat)
+  const participant = (metadata.participants || []).find(item =>
+    participantValues(item).some(value => sameIdentity(value, ctx.sender))
+  )
+
+  if (!participant?.admin) {
+    throw new Error('Solo los administradores del grupo pueden usar .setbot.')
+  }
+
+  return metadata
 }
 
 const fmt = ms => {
@@ -190,7 +227,7 @@ export const setPrincipalCommand = {
   name: 'setprincipal',
   aliases: ['setbot'],
   async execute(ctx) {
-    assertInstanceControl(ctx)
+    await assertGroupAdmin(ctx)
     if (!ctx.chat.endsWith('@g.us')) {
       throw new Error('Este comando solo funciona en grupos.')
     }
@@ -212,6 +249,7 @@ export const setPrincipalCommand = {
     })
 
     const current = getGroupPrincipal(ctx.chat)
+    const prefix = ctx.prefix || config.prefix
     const all = [
       ...(available.principalPresent
         ? [{
@@ -242,7 +280,7 @@ export const setPrincipalCommand = {
             ? 'automático'
             : bot.status
       }`,
-      id: `${config.prefix}principalpick ${bot.id}`
+      id: `${prefix}principalpick ${bot.id}`
     }))
 
     const body = all.length > 1
@@ -268,7 +306,7 @@ export const principalPickCommand = {
   name: 'principalpick',
   aliases: [],
   async execute(ctx) {
-    assertInstanceControl(ctx)
+    await assertGroupAdmin(ctx)
     if (!ctx.chat.endsWith('@g.us')) return
 
     const id = String(ctx.args[0] || '')
@@ -303,7 +341,7 @@ export const principalPickCommand = {
     await ctx.sock.sendMessage(ctx.chat, {
       text:
         `✅ *${selected}* será la única instancia que responderá comandos en este grupo.\n` +
-        `Para volver al modo automático usa *${config.prefix}resetprincipal*.`
+        `Para volver al modo automático usa *${ctx.prefix || config.prefix}resetprincipal*.`
     }, { quoted: ctx.msg })
   }
 }
@@ -346,7 +384,7 @@ export const resetPrincipalCommand = {
   name: 'resetprincipal',
   aliases: [],
   async execute(ctx) {
-    assertInstanceControl(ctx)
+    await assertGroupAdmin(ctx)
     if (!ctx.chat.endsWith('@g.us')) {
       throw new Error('Este comando solo funciona en grupos.')
     }
@@ -390,6 +428,86 @@ export const logoutSubbotCommand = {
   }
 }
 
+export const deleteSubbotCommand = {
+  name: 'delsubbot',
+  aliases: ['deletesubbot', 'rm-subbot'],
+  async execute(ctx) {
+    assertInstanceControl(ctx)
+
+    const id = String(ctx.args[0] || '').replace(/\D/g, '')
+    if (id.length < 8 || id.length > 15) {
+      throw new Error('Uso: *.delsubbot <número con código de país>*')
+    }
+
+    const existing = getSubbot(id)
+    if (!existing) {
+      throw new Error(`No encontré un SubBot registrado con el número +${id}.`)
+    }
+
+    const deletingSelf =
+      ctx.instanceType === 'subbot' && String(ctx.instanceId || '') === id
+
+    await ctx.sock.sendMessage(ctx.chat, {
+      text: [
+        '「🗑️」 *Eliminando SubBot*',
+        '',
+        `Número: +${id}`,
+        'Se eliminarán el proceso PM2, la sesión y el registro.',
+        '',
+        '> Nero AI | © ArcadiaCorps'
+      ].join('\n')
+    }, { quoted: ctx.msg })
+
+    await deleteSubbot(id)
+
+    if (!deletingSelf) {
+      await ctx.sock.sendMessage(ctx.chat, {
+        text: [
+          '「✅」 *SubBot eliminado*',
+          '',
+          `Número: +${id}`,
+          'Proceso PM2: eliminado',
+          'Sesión: eliminada',
+          'Registro: eliminado',
+          '',
+          '> Nero AI | © ArcadiaCorps'
+        ].join('\n')
+      }, { quoted: ctx.msg })
+    }
+  }
+}
+
+export const deleteRedSubbotsCommand = {
+  name: 'delsubbotsrojos',
+  aliases: ['limpiarsubbots', 'cleansubbots'],
+  async execute(ctx) {
+    assertInstanceControl(ctx)
+
+    const result = await deleteBrokenSubbots()
+    const lines = [
+      '「🧹」 *Limpieza de SubBots*',
+      '',
+      `Eliminados: *${result.deleted.length}*`,
+      `Protegidos/online: *${result.protected.length}*`
+    ]
+
+    if (result.deleted.length) {
+      lines.push('', '*Eliminados:*')
+      for (const item of result.deleted) {
+        lines.push(`• +${item.id} — ${item.status}`)
+      }
+    } else {
+      lines.push('', '✅ No encontré SubBots rojos o dañados para eliminar.')
+    }
+
+    lines.push('', '> Nero AI | © ArcadiaCorps')
+
+    await ctx.sock.sendMessage(ctx.chat, {
+      text: lines.join('\n')
+    }, { quoted: ctx.msg })
+  }
+}
+
 export const subbotCommands = [
   codeCommand,
   botsCommand,
@@ -397,5 +515,7 @@ export const subbotCommands = [
   principalPickCommand,
   principalInfoCommand,
   resetPrincipalCommand,
-  logoutSubbotCommand
+  logoutSubbotCommand,
+  deleteSubbotCommand,
+  deleteRedSubbotsCommand
 ]

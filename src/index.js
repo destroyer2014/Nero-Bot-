@@ -564,7 +564,7 @@ async function startNeroBot() {
         })
         if (chat) {
           await sock.sendMessage(chat, {
-            text: commandErrorMessage(code)
+            text: commandErrorMessage(code, error)
           }, { quoted: msg }).catch(() => {})
         }
       }

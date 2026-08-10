@@ -1,5 +1,6 @@
 import { command as menu } from './menu.js'
 import { command as ping } from './ping.js'
+import { speedtestCommand } from './speedtest.js'
 import { command as info } from './info.js'
 import { downloadCommands } from './downloads.js'
 import { toolCommands } from './tools.js'
@@ -32,6 +33,7 @@ import { gameCommands } from './games.js'
 const commands = [
   menu,
   ping,
+  speedtestCommand,
   info,
   serverCommand,
   ...gameCommands,

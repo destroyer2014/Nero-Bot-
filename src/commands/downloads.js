@@ -70,7 +70,7 @@ async function apiTask(ctx, fn) {
       instanceType: ctx.instanceType || 'principal'
     })
     await ctx.sock.sendMessage(ctx.chat, {
-      text: commandErrorMessage(code)
+      text: commandErrorMessage(code, error)
     }, { quoted: ctx.msg })
     await react(ctx.sock, ctx.msg, '❌')
   }
@@ -94,7 +94,7 @@ async function directMedia(ctx, endpoint, params, captionBuilder = null, options
 export const play = {
   name: 'play', aliases: ['youtube','yt'],
   async execute(ctx) { return apiTask(ctx, async () => {
-    const q = queryText(ctx.args); if (!q) throw new Error(usage('play','<búsqueda>'))
+    const q = queryText(ctx.args); if (!q) throw new Error(usage('play','<nombre>'))
     const data = await apiGet('/ytsearch', { q, limit: config.searchLimit })
     if (!data.results?.length) throw new Error('No encontré resultados en YouTube.')
     const token = saveSelection('youtube', data.results)

@@ -126,6 +126,75 @@ export async function deleteSubbot(id) {
   }).unref()
 }
 
+export async function listPm2SubbotStates() {
+  const result = await runPm2(['jlist'], { allowFailure: true })
+  let processes = []
+  try {
+    processes = JSON.parse(result.stdout || '[]')
+  } catch {
+    processes = []
+  }
+
+  return processes
+    .filter(process => String(process?.name || '').startsWith('nero-subbot-'))
+    .map(process => ({
+      id: String(process.name).replace(/^nero-subbot-/, ''),
+      name: process.name,
+      status: String(process?.pm2_env?.status || 'unknown').toLowerCase()
+    }))
+}
+
+export async function deleteBrokenSubbots() {
+  const states = await listPm2SubbotStates()
+  const stateMap = new Map(states.map(item => [item.id, item]))
+  const badPm2 = new Set(['errored', 'stopped', 'stopping'])
+  const badRegistry = new Set([
+    'pairing-paused',
+    'error',
+    'failed',
+    'stopped',
+    'disconnected'
+  ])
+
+  const candidates = new Map()
+
+  for (const item of states) {
+    if (badPm2.has(item.status)) {
+      candidates.set(item.id, item.status)
+    }
+  }
+
+  for (const bot of listSubbots()) {
+    const id = String(bot.id || bot.phone || '')
+    if (!id) continue
+    const pm2 = stateMap.get(id)
+
+    // Protección absoluta: nunca borrar un proceso que PM2 reporte online.
+    if (pm2?.status === 'online') continue
+
+    const status = String(bot.status || '').toLowerCase()
+    if (badRegistry.has(status)) {
+      candidates.set(id, pm2?.status || status)
+    }
+  }
+
+  const deleted = []
+  const protectedItems = []
+
+  for (const [id, status] of candidates) {
+    const current = stateMap.get(id)
+    if (current?.status === 'online') {
+      protectedItems.push({ id, status: current.status })
+      continue
+    }
+
+    await deleteSubbot(id)
+    deleted.push({ id, status })
+  }
+
+  return { deleted, protected: protectedItems, states }
+}
+
 export async function restartAllSubbots() {
   for (const bot of listSubbots()) {
     spawn('pm2', ['restart', `nero-subbot-${bot.id}`], {
