@@ -36,6 +36,7 @@ import { moderateIncoming } from './lib/nsfwGuard.js'
 import { getSubbotConfig, watchSubbotConfig } from './lib/subbotConfigStore.js'
 import { shouldHandleGroup } from './lib/instanceRouter.js'
 import { recordCommandError, commandErrorMessage } from './lib/commandErrors.js'
+import { handleAdminParticipantUpdate } from './lib/adminEvents.js'
 
 const args = process.argv.slice(2)
 const arg = name => {
@@ -541,6 +542,13 @@ async function start() {
         : []
       const action = String(update?.action || '').toLowerCase()
       if (!groupId || !participants.length) return
+
+      if (await handleAdminParticipantUpdate({
+        sock,
+        update,
+        instanceType: 'subbot',
+        instanceId: id
+      })) return
 
       const isAdd = ['add', 'invite', 'join'].includes(action)
       const isRemove = ['remove', 'leave'].includes(action)

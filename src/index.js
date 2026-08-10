@@ -18,6 +18,7 @@ import { startGachaScheduler } from './commands/gacha.js'
 import { getPermissionLevel, isOwner, isStaff, isSubOwner } from './lib/permissions.js'
 import { moderateIncoming } from './lib/nsfwGuard.js'
 import { getGroup } from './lib/groupStore.js'
+import { handleAdminParticipantUpdate } from './lib/adminEvents.js'
 import { recordCommandError, commandErrorMessage } from './lib/commandErrors.js'
 import { consumeSubbotEvents } from './lib/subbotEvents.js'
 import { sendInteractive, copyButton } from './lib/interactive.js'
@@ -437,6 +438,14 @@ async function startNeroBot() {
       const participants = Array.isArray(update?.participants) ? update.participants : []
       const action = String(update?.action || '').toLowerCase()
       if (!groupId || !participants.length) return
+
+      if (await handleAdminParticipantUpdate({
+        sock,
+        update,
+        instanceType: 'principal',
+        instanceId: 'principal'
+      })) return
+
       const settings = getGroup(groupId)
       const isAdd = ['add','invite','join'].includes(action)
       const isRemove = ['remove','leave'].includes(action)

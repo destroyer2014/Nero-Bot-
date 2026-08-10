@@ -12,7 +12,31 @@ const wrapperKinds = [
   'documentWithCaptionMessage',
   'editedMessage'
 ]
-const linkRegex = /(https?:\/\/|www\.|chat\.whatsapp\.com\/|wa\.me\/|t\.me\/)/i
+const explicitLinkRegex = /(?:https?:\/\/|www\.)[^\s<>{}\[\]]+/i
+const domainRegex = /\b(?:[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?\.)+([a-z]{2,63})(?:[\/:?#][^\s<>{}\[\]]*)?/gi
+const nonDomainExtensions = new Set([
+  'jpg','jpeg','png','gif','webp','bmp','svg',
+  'mp3','m4a','wav','ogg','flac','mp4','mkv','avi','mov','webm',
+  'pdf','zip','rar','7z','tar','gz',
+  'txt','json','js','ts','css','html',
+  'doc','docx','xls','xlsx','ppt','pptx'
+])
+
+function containsGlobalLink(value = '') {
+  const text = String(value || '').trim()
+  if (!text) return false
+
+  if (explicitLinkRegex.test(text)) return true
+
+  domainRegex.lastIndex = 0
+  for (const match of text.matchAll(domainRegex)) {
+    const tld = String(match[1] || '').toLowerCase()
+    if (!nonDomainExtensions.has(tld)) return true
+  }
+
+  return false
+}
+
 
 const jidKey = value => String(value || '').replace(/:\d+@/, '@').split('@')[0].replace(/\D/g, '')
 const sameIdentity = (a, b) => Boolean(jidKey(a) && jidKey(a) === jidKey(b))
@@ -77,6 +101,52 @@ async function adminState(sock, chat, user) {
     userAdmin: Boolean(find(userCandidates)?.admin),
     botAdmin: Boolean(find(botCandidates)?.admin)
   }
+}
+
+async function punishGlobalLink({ sock, msg, chat, sender }) {
+  await sock.sendMessage(chat, { delete: msg.key }).catch(error => {
+    console.warn(
+      '[ANTILINK] No se pudo borrar el mensaje:',
+      error?.message || error
+    )
+  })
+
+  const mention = `@${String(sender || '').split('@')[0].split(':')[0]}`
+
+  try {
+    await sock.groupParticipantsUpdate(chat, [sender], 'remove')
+    setWarn(chat, sender, 0)
+
+    await sock.sendMessage(chat, {
+      text: [
+        '「🔗」 *AntiLink*',
+        '',
+        `Has sido eliminado por enviar enlaces ${mention}`,
+        '',
+        '> Segurity Nero AI | © ArcadiaCorps'
+      ].join('\n'),
+      mentions: [sender]
+    }).catch(() => {})
+  } catch (error) {
+    console.warn(
+      '[ANTILINK] No se pudo expulsar al usuario:',
+      error?.message || error
+    )
+
+    await sock.sendMessage(chat, {
+      text: [
+        '「⚠️」 *AntiLink detectó un enlace*',
+        '',
+        `No pude expulsar a ${mention}.`,
+        'Verifica que Nero siga siendo administrador.',
+        '',
+        '> Segurity Nero AI | © ArcadiaCorps'
+      ].join('\n'),
+      mentions: [sender]
+    }).catch(() => {})
+  }
+
+  return true
 }
 
 async function punish({ sock, msg, chat, sender, reason, detail = '', protectedUser = false }) {
@@ -232,8 +302,12 @@ export async function moderateIncoming({
   }
 
   const protectedUser = Boolean(permissions.userAdmin || isOwner || isSubOwner)
-  if (settings.antiLink && !protectedUser && linkRegex.test(text || '')) {
-    return punish({ sock, msg, chat, sender, reason: 'enlace no permitido' })
+  if (
+    settings.antiLink &&
+    !protectedUser &&
+    containsGlobalLink(text || '')
+  ) {
+    return punishGlobalLink({ sock, msg, chat, sender })
   }
 
   if (!settings.antiNsfw || !mediaTarget(msg)) return false

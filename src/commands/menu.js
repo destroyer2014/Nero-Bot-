@@ -171,7 +171,7 @@ const sections = [
     title: '🛡️ GRUPOS Y SEGURIDAD',
     entries: [
       ['.antinsfw on|off', 'Activa o desactiva el detector NSFW.'],
-      ['.antilink on|off', 'Activa o desactiva anti-enlaces.'],
+      ['.antilink on|off', 'AntiLink global: borra enlaces y expulsa usuarios no administradores.'],
       ['.warn • .warns • .resetwarn', 'Administra advertencias.'],
       ['.bienvenida • .despedida', 'Configura entradas y salidas.'],
       ['.setimgbienvenida • .setimgdespedida', 'Configura imágenes de bienvenida/despedida.'],

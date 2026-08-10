@@ -3,6 +3,7 @@ import fs from 'node:fs/promises'
 import path from 'node:path'
 import { getGroup, patchGroup, getWarn, setWarn, resetWarn, saveTimer, clearTimer } from '../lib/groupStore.js'
 import { analyzeQuotedNsfw } from '../lib/nsfwGuard.js'
+import { rememberAdminActor, announceAdminAction } from '../lib/adminEvents.js'
 
 function contextInfo(ctx){
   const m=ctx.msg.message||{}
@@ -75,7 +76,28 @@ export const antinsfw=wrap('antinsfw',['nsfw'],async ctx=>{
   patchGroup(ctx.chat,{antiNsfw:action==='on'})
   await ctx.sock.sendMessage(ctx.chat,{text:`✅ Anti-NSFW de EvoGB ${action==='on'?'activado':'desactivado'}.`},{quoted:ctx.msg})
 })
-export const antilink=wrap('antilink',[],ctx=>toggle(ctx,'antiLink','Anti-enlaces'))
+export const antilink=wrap('antilink',[],async ctx=>{
+  const value=(ctx.args[0]||'').toLowerCase()
+  if(!['on','off'].includes(value))throw new Error('Uso: .antilink on/off')
+
+  if(value==='on') await requireBotAdmin(ctx)
+  else await requireAdmin(ctx)
+
+  patchGroup(ctx.chat,{antiLink:value==='on'})
+
+  await ctx.sock.sendMessage(ctx.chat,{
+    text:value==='on'
+      ? [
+          '「🔗」 *AntiLink global activado*',
+          '',
+          'Se bloquearán enlaces, dominios, invitaciones y redes sociales.',
+          'Los usuarios no administradores serán expulsados inmediatamente.',
+          '',
+          '> Segurity Nero AI | © ArcadiaCorps'
+        ].join('\n')
+      : '✅ AntiLink global desactivado.'
+  },{quoted:ctx.msg})
+})
 export const welcome=wrap('bienvenida',['welcome'],ctx=>toggle(ctx,'welcome','Bienvenida'))
 export const goodbye=wrap('despedida',['goodbye'],ctx=>toggle(ctx,'goodbye','Despedida'))
 export const setwelcome=wrap('setbienvenida',[],async ctx=>{await requireAdmin(ctx);const text=ctx.args.join(' ').trim();if(!text)throw new Error('Uso: .setbienvenida <texto>');patchGroup(ctx.chat,{welcomeText:text});await ctx.sock.sendMessage(ctx.chat,{text:'✅ Mensaje de bienvenida actualizado.'},{quoted:ctx.msg})})
@@ -89,8 +111,36 @@ export const open=wrap('abrir',['open'],async ctx=>{await requireBotAdmin(ctx);a
 export const close=wrap('cerrar',['close'],async ctx=>{await requireBotAdmin(ctx);await ctx.sock.groupSettingUpdate(ctx.chat,'announcement');await ctx.sock.sendMessage(ctx.chat,{text:'🔒 Grupo cerrado.'},{quoted:ctx.msg})})
 export const opentimer=wrap('abrirgrupo',[],ctx=>scheduleGroup(ctx,'not_announcement'))
 export const closetimer=wrap('cerrargrupo',[],ctx=>scheduleGroup(ctx,'announcement'))
-export const promote=wrap('promote',['daradmin'],async ctx=>{await requireBotAdmin(ctx);const t=targetFromMsg(ctx);if(!t)throw new Error('Menciona o responde al usuario.');await ctx.sock.groupParticipantsUpdate(ctx.chat,[t],'promote');await ctx.sock.sendMessage(ctx.chat,{text:`✅ @${t.split('@')[0]} ahora es administrador.`,mentions:[t]},{quoted:ctx.msg})})
-export const demote=wrap('demote',['quitaradmin'],async ctx=>{await requireBotAdmin(ctx);const t=targetFromMsg(ctx);if(!t)throw new Error('Menciona o responde al usuario.');await ctx.sock.groupParticipantsUpdate(ctx.chat,[t],'demote');await ctx.sock.sendMessage(ctx.chat,{text:`✅ Se quitó la administración a @${t.split('@')[0]}.`,mentions:[t]},{quoted:ctx.msg})})
+export const promote=wrap('promote',['daradmin'],async ctx=>{
+  await requireBotAdmin(ctx)
+  const t=targetFromMsg(ctx)
+  if(!t)throw new Error('Menciona o responde al usuario.')
+
+  rememberAdminActor(ctx.chat,t,'promote',ctx.sender)
+  await ctx.sock.groupParticipantsUpdate(ctx.chat,[t],'promote')
+  await announceAdminAction({
+    sock:ctx.sock,
+    groupId:ctx.chat,
+    target:t,
+    action:'promote',
+    actor:ctx.sender
+  })
+})
+export const demote=wrap('demote',['quitaradmin'],async ctx=>{
+  await requireBotAdmin(ctx)
+  const t=targetFromMsg(ctx)
+  if(!t)throw new Error('Menciona o responde al usuario.')
+
+  rememberAdminActor(ctx.chat,t,'demote',ctx.sender)
+  await ctx.sock.groupParticipantsUpdate(ctx.chat,[t],'demote')
+  await announceAdminAction({
+    sock:ctx.sock,
+    groupId:ctx.chat,
+    target:t,
+    action:'demote',
+    actor:ctx.sender
+  })
+})
 export const kick=wrap('kick',['expulsar'],async ctx=>{await requireBotAdmin(ctx);const t=targetFromMsg(ctx);if(!t)throw new Error('Menciona o responde al usuario.');await ctx.sock.groupParticipantsUpdate(ctx.chat,[t],'remove');await ctx.sock.sendMessage(ctx.chat,{text:`✅ @${t.split('@')[0]} fue expulsado.`,mentions:[t]},{quoted:ctx.msg})})
 export const warn=wrap('warn',['advertir'],async ctx=>{await requireBotAdmin(ctx);const t=targetFromMsg(ctx);if(!t)throw new Error('Menciona o responde al usuario.');const count=setWarn(ctx.chat,t,getWarn(ctx.chat,t)+1);const reason=ctx.args.filter(x=>!x.startsWith('@')).join(' ')||'Sin motivo';if(count>=3){await ctx.sock.sendMessage(ctx.chat,{text:`🚫 @${t.split('@')[0]} llegó a 3 advertencias y será expulsado.\nMotivo: ${reason}`,mentions:[t]});await ctx.sock.groupParticipantsUpdate(ctx.chat,[t],'remove');resetWarn(ctx.chat,t)}else await ctx.sock.sendMessage(ctx.chat,{text:`⚠️ @${t.split('@')[0]} recibió una advertencia (${count}/3).\nMotivo: ${reason}`,mentions:[t]},{quoted:ctx.msg})})
 export const warns=wrap('warns',[],async ctx=>{await requireAdmin(ctx);const t=targetFromMsg(ctx);if(!t)throw new Error('Menciona o responde al usuario.');await ctx.sock.sendMessage(ctx.chat,{text:`⚠️ @${t.split('@')[0]} tiene ${getWarn(ctx.chat,t)}/3 advertencias.`,mentions:[t]},{quoted:ctx.msg})})
@@ -120,7 +170,20 @@ export const testgoodbye=wrap('testgoodbye',[],ctx=>{if(!ctx.isOwner)throw new E
 
 export const del=wrap('del',['delete','borrar'],async ctx=>{await requireBotAdmin(ctx);const c=contextInfo(ctx);if(!c?.stanzaId)throw new Error('Responde al mensaje que quieres eliminar.');const participant=c.participant||'';const botIds=[ctx.sock.user?.id,ctx.sock.user?.jid,ctx.sock.user?.lid].filter(Boolean);const fromMe=participant?botIds.some(id=>sameIdentity(id,participant)):false;const key={remoteJid:ctx.chat,fromMe,id:c.stanzaId};if(ctx.chat.endsWith('@g.us')&&participant&&!fromMe)key.participant=participant;await ctx.sock.sendMessage(ctx.chat,{delete:key})})
 
-export const groupconfig=wrap('groupconfig',['configgrupo'],async ctx=>{await requireAdmin(ctx);const g=getGroup(ctx.chat);await ctx.sock.sendMessage(ctx.chat,{text:`⚙️ *Configuración del grupo*\nAnti-NSFW: ${g.antiNsfw?'ON':'OFF'}\nAnti-enlaces: ${g.antiLink?'ON':'OFF'}\nBienvenida: ${g.welcome?'ON':'OFF'}\nDespedida: ${g.goodbye?'ON':'OFF'}`},{quoted:ctx.msg})})
+export const groupconfig=wrap('groupconfig',['configgrupo'],async ctx=>{
+  await requireAdmin(ctx)
+  const g=getGroup(ctx.chat)
+  await ctx.sock.sendMessage(ctx.chat,{
+    text:[
+      '⚙️ *Configuración del grupo*',
+      `Anti-NSFW: ${g.antiNsfw?'ON':'OFF'}`,
+      `AntiLink global: ${g.antiLink?'ON':'OFF'}`,
+      'Castigo AntiLink: expulsión inmediata',
+      `Bienvenida: ${g.welcome?'ON':'OFF'}`,
+      `Despedida: ${g.goodbye?'ON':'OFF'}`
+    ].join('\n')
+  },{quoted:ctx.msg})
+})
 export const tagall=wrap('tagall',[],async ctx=>{const m=await requireAdmin(ctx);const ids=m.participants.map(x=>x.id);await ctx.sock.sendMessage(ctx.chat,{text:`📢 ${ctx.args.join(' ')||'Atención a todos'}\n\n${ids.map(x=>`@${x.split('@')[0]}`).join(' ')}`,mentions:ids},{quoted:ctx.msg})})
 export const hidetagall=wrap('hidetagall',['htagall'],async ctx=>{const m=await requireAdmin(ctx);const mentions=m.participants.map(x=>x.id);const directText=ctx.args.join(' ').trim();if(directText){await ctx.sock.sendMessage(ctx.chat,{text:directText,mentions},{quoted:ctx.msg});return}const c=contextInfo(ctx);const quoted=c?.quotedMessage;if(!quoted){await ctx.sock.sendMessage(ctx.chat,{text:'📢 Atención',mentions},{quoted:ctx.msg});return}const quotedText=quoted.conversation||quoted.extendedTextMessage?.text;if(quotedText){await ctx.sock.sendMessage(ctx.chat,{text:quotedText,mentions},{quoted:ctx.msg});return}const target={key:{remoteJid:ctx.chat,id:c.stanzaId,participant:c.participant},message:quoted};let buffer;try{buffer=await downloadMediaMessage(target,'buffer',{}, {logger:console,reuploadRequest:ctx.sock.updateMediaMessage})}catch{}if(!buffer)throw new Error('No pude descargar el mensaje citado.');if(quoted.imageMessage){await ctx.sock.sendMessage(ctx.chat,{image:buffer,caption:quoted.imageMessage.caption||'',mentions},{quoted:ctx.msg});return}if(quoted.videoMessage){await ctx.sock.sendMessage(ctx.chat,{video:buffer,caption:quoted.videoMessage.caption||'',mimetype:quoted.videoMessage.mimetype||'video/mp4',gifPlayback:Boolean(quoted.videoMessage.gifPlayback),mentions},{quoted:ctx.msg});return}if(quoted.documentMessage){await ctx.sock.sendMessage(ctx.chat,{document:buffer,fileName:quoted.documentMessage.fileName||'archivo',mimetype:quoted.documentMessage.mimetype||'application/octet-stream',caption:quoted.documentMessage.caption||'',mentions},{quoted:ctx.msg});return}if(quoted.audioMessage){await ctx.sock.sendMessage(ctx.chat,{audio:buffer,mimetype:quoted.audioMessage.mimetype||'audio/mpeg',ptt:Boolean(quoted.audioMessage.ptt),mentions},{quoted:ctx.msg});return}if(quoted.stickerMessage){await ctx.sock.sendMessage(ctx.chat,{sticker:buffer},{quoted:ctx.msg});await ctx.sock.sendMessage(ctx.chat,{text:'‎',mentions});return}throw new Error('Ese tipo de mensaje todavía no es compatible con .hidetagall.')})
 export const hidetag=wrap('hidetag',[],async ctx=>{const m=await requireAdmin(ctx);const text=ctx.args.join(' ').trim();if(!text)throw new Error('Uso: .hidetag <mensaje>');await ctx.sock.sendMessage(ctx.chat,{text,mentions:m.participants.map(x=>x.id)},{quoted:ctx.msg})})
