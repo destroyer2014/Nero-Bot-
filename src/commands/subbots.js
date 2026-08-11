@@ -276,16 +276,21 @@ export const setPrincipalCommand = {
       } • ${
         String(bot.id) === String(current)
           ? 'seleccionado manualmente'
-          : (!current && String(bot.id) === String(automatic.id))
-            ? 'automático'
+          : !current
+            ? 'modo libre: responde'
             : bot.status
       }`,
       id: `${prefix}principalpick ${bot.id}`
     }))
 
     const body = all.length > 1
-      ? 'Selecciona la única instancia que responderá comandos en este grupo.'
-      : 'Solo hay una instancia de Nero en este grupo; responderá automáticamente aunque no uses .setbot.'
+      ? [
+          'Actualmente el grupo está en modo libre si no existe una selección manual.',
+          'En modo libre responden el principal y todos los SubBots disponibles.',
+          '',
+          'Selecciona una instancia para que sea la única que responda.'
+        ].join('\n')
+      : 'Solo hay una instancia de Nero disponible en este grupo.'
 
     await sendInteractive(ctx.sock, ctx.chat, {
       title: 'Elegir bot del grupo',
@@ -362,19 +367,25 @@ export const principalInfoCommand = {
       instanceId: ctx.instanceId
     })
 
-    const selected = route.id === 'principal'
-      ? 'Nero principal'
-      : `+${getSubbot(route.id)?.phone || route.id}`
+    const selected = route.id === 'all'
+      ? 'Todas las instancias disponibles'
+      : route.id === 'principal'
+        ? 'Nero principal'
+        : `+${getSubbot(route.id)?.phone || route.id}`
 
     await ctx.sock.sendMessage(ctx.chat, {
       text: [
-        `🤖 Instancia que responde: *${selected}*`,
-        explicit
+        `🤖 Responden: *${selected}*`,
+        explicit && route.source === 'manual'
           ? '🎯 Modo: selección manual (.setbot)'
-          : '⚙️ Modo: selección automática',
-        route.source === 'fallback'
-          ? '⚠️ La selección guardada no está disponible; Nero está usando una instancia disponible temporalmente.'
-          : null
+          : route.source === 'fallback-all'
+            ? '🛟 Modo: fallback libre'
+            : '⚙️ Modo: libre',
+        route.source === 'fallback-all'
+          ? '⚠️ La instancia seleccionada no está disponible. Mientras vuelve, las demás instancias pueden responder.'
+          : !explicit
+            ? 'Todas las instancias disponibles responden hasta que un administrador use .setbot.'
+            : null
       ].filter(Boolean).join('\n')
     }, { quoted: ctx.msg })
   }
@@ -391,21 +402,22 @@ export const resetPrincipalCommand = {
 
     resetGroupPrincipal(ctx.chat)
 
-    const route = await resolveGroupInstance({
+    await resolveGroupInstance({
       sock: ctx.sock,
       groupId: ctx.chat,
       instanceType: ctx.instanceType,
       instanceId: ctx.instanceId
     })
 
-    const selected = route.id === 'principal'
-      ? 'Nero principal'
-      : `+${getSubbot(route.id)?.phone || route.id}`
-
     await ctx.sock.sendMessage(ctx.chat, {
-      text:
-        '✅ El grupo volvió a *selección automática*.\n' +
-        `Ahora responderá: *${selected}*.`
+      text: [
+        '✅ El grupo volvió a *modo libre*.',
+        '',
+        'El bot principal y todos los SubBots disponibles podrán responder comandos.',
+        'Usa *.setbot* si quieres dejar una sola instancia.',
+        '',
+        '> Nero AI | © ArcadiaCorps'
+      ].join('\n')
     }, { quoted: ctx.msg })
   }
 }

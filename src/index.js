@@ -23,6 +23,8 @@ import { recordCommandError, commandErrorMessage } from './lib/commandErrors.js'
 import { consumeSubbotEvents } from './lib/subbotEvents.js'
 import { sendInteractive, copyButton } from './lib/interactive.js'
 import { getInstanceMode, privateCommandsAllowed } from './lib/modeStore.js'
+import { checkCommandRate, rateLimitMessage } from './lib/commandGuard.js'
+import { createInstanceHeartbeat } from './lib/instanceHeartbeat.js'
 import { hasPendingSubbotPhone, clearPendingSubbotPhone } from './lib/pendingSubbotPhone.js'
 import { createSubbotForPhone } from './commands/subbots.js'
 import { getCachedPhoneForLid, setCachedPhoneForLid } from './lib/lidCache.js'
@@ -34,6 +36,7 @@ import {
 
 const logger = pino({ level: process.env.BAILEYS_LOG_LEVEL || 'silent' })
 const sessionPath = path.resolve('sessions', config.sessionName)
+const instanceHeartbeat = createInstanceHeartbeat('principal', 'principal')
 
 let phoneNumber = null
 let pairingCodeRequested = false
@@ -332,10 +335,22 @@ function formatPairingCode(code = '') {
 
 function scheduleReconnect() {
   if (reconnectTimer) return
+
+  const delay = Math.min(
+    30_000,
+    4000 * (2 ** Math.max(0, reconnectAttempts - 1))
+  )
+
+  console.log(
+    `⏳ Reintento de conexión en ${Math.round(delay / 1000)}s...`
+  )
+
   reconnectTimer = setTimeout(() => {
     reconnectTimer = null
-    startNeroBot().catch(error => console.error('Error al reconectar:', error))
-  }, 4000)
+    startNeroBot().catch(
+      error => console.error('Error al reconectar:', error)
+    )
+  }, delay)
 }
 
 async function startNeroBot() {
@@ -400,12 +415,14 @@ async function startNeroBot() {
       phoneNumber = null
       console.log(`✅ ${config.botName} conectado como ${sock.user?.id || 'cuenta vinculada'}`)
       console.log(`📌 Tipo de instancia: ${config.instanceType === 'subbot' ? 'Subbot' : 'Bot principal'}`)
+      instanceHeartbeat.setOnline(true)
       await refreshPrincipalPresence(sock).catch(error =>
         console.warn('[INSTANCE ROUTER]', error?.message || error)
       )
     }
 
     if (connection === 'close') {
+      instanceHeartbeat.setOnline(false)
       const statusCode = new Boom(lastDisconnect?.error)?.output?.statusCode
       const loggedOut = statusCode === DisconnectReason.loggedOut
 
@@ -525,15 +542,47 @@ async function startNeroBot() {
           continue
         }
 
+        let groupRoute = null
+
         if (chat.endsWith('@g.us')) {
           rememberPrincipalGroup(chat, sock.user?.id || sock.user?.jid || '')
-          const { handle } = await shouldHandleGroup({
+          const routing = await shouldHandleGroup({
             sock,
             groupId: chat,
             instanceType: 'principal',
-            instanceId: 'principal'
+            instanceId: 'principal',
+            commandName: command.name || rawCommand
           })
-          if (!handle) continue
+
+          if (!routing.handle) continue
+          groupRoute = routing.route
+        }
+
+        const rate = checkCommandRate({
+          sender,
+          chat,
+          messageId: msg.key?.id || ''
+        })
+
+        if (!rate.allow) {
+          const shouldWarn =
+            rate.notify &&
+            (
+              !groupRoute ||
+              groupRoute.id === 'principal' ||
+              (
+                groupRoute.id === 'all' &&
+                groupRoute.controlId === 'principal'
+              )
+            )
+
+          if (shouldWarn) {
+            await sock.sendMessage(chat, {
+              text: rateLimitMessage(rate)
+            }, { quoted: msg }).catch(() => {})
+          }
+
+          continue
         }
 
         await command.execute({

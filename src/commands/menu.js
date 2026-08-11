@@ -149,8 +149,8 @@ const categories = {
     entries: [
       '.code',
       '.bots',
-      '.setbot  — admins del grupo',
-      '.principal',
+      '.setbot  — elegir una sola instancia',
+      '.principal  — ver modo libre/seleccionado',
       '.resetprincipal  — admins del grupo',
       '.modo  — Owner/SubOwner',
       '.logout',

@@ -1,7 +1,7 @@
 {
   "name": "nero-bot",
-  "version": "1.14.0",
-  "description": "Nero Bot v1.14.0: menú compacto, diagnóstico, errores claros y control de SubBots",
+  "version": "1.15.0",
+  "description": "Nero Bot v1.15.0: anti-ráfagas, failover y modo libre multi-instancia",
   "type": "module",
   "main": "src/index.js",
   "scripts": {

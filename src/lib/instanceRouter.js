@@ -2,8 +2,17 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { getGroupPrincipal } from './principalStore.js'
 import { listSubbots } from './subbotRegistry.js'
+import { isInstanceAlive } from './instanceHeartbeat.js'
 
 const principalFile = path.resolve('runtime', 'principal-instance.json')
+
+const CONTROL_COMMANDS = new Set([
+  'setprincipal',
+  'setbot',
+  'principalpick',
+  'principal',
+  'resetprincipal'
+])
 
 function digits(value = '') {
   return String(value)
@@ -33,19 +42,26 @@ function writePrincipalPresence(patch = {}) {
     ...current,
     ...patch,
     groups: Array.isArray(patch.groups)
-      ? [...new Set(patch.groups.filter(group => String(group).endsWith('@g.us')))]
+      ? [...new Set(
+          patch.groups.filter(group => String(group).endsWith('@g.us'))
+        )]
       : Array.isArray(current.groups) ? current.groups : [],
     updatedAt: Date.now()
   }
+
   atomicWrite(principalFile, next)
   return next
 }
 
 export function rememberPrincipalGroup(groupId, jid = '') {
-  if (!String(groupId || '').endsWith('@g.us')) return getPrincipalPresence()
+  if (!String(groupId || '').endsWith('@g.us')) {
+    return getPrincipalPresence()
+  }
+
   const current = getPrincipalPresence()
   const groups = new Set(current.groups || [])
   groups.add(groupId)
+
   return writePrincipalPresence({
     jid: jid || current.jid || '',
     groups: [...groups]
@@ -55,20 +71,27 @@ export function rememberPrincipalGroup(groupId, jid = '') {
 export async function refreshPrincipalPresence(sock) {
   const jid = sock?.user?.id || sock?.user?.jid || ''
   let groups = []
+
   try {
     if (typeof sock?.groupFetchAllParticipating === 'function') {
       const all = await sock.groupFetchAllParticipating()
-      groups = Object.keys(all || {}).filter(groupId => groupId.endsWith('@g.us'))
+      groups = Object.keys(all || {})
+        .filter(groupId => groupId.endsWith('@g.us'))
     }
   } catch (error) {
-    console.warn('[INSTANCE ROUTER] principal groups:', error?.message || error)
+    console.warn(
+      '[INSTANCE ROUTER] principal groups:',
+      error?.message || error
+    )
     groups = getPrincipalPresence().groups || []
   }
+
   return writePrincipalPresence({ jid, groups })
 }
 
 function participantValues(participant = {}) {
   if (typeof participant === 'string') return [participant]
+
   return [
     participant.id,
     participant.jid,
@@ -80,21 +103,24 @@ function participantValues(participant = {}) {
 function participantSet(metadata) {
   const exact = new Set()
   const numeric = new Set()
+
   for (const participant of metadata?.participants || []) {
     for (const value of participantValues(participant)) {
       exact.add(String(value))
-      const n = digits(value)
-      if (n) numeric.add(n)
+      const number = digits(value)
+      if (number) numeric.add(number)
     }
   }
+
   return { exact, numeric }
 }
 
 function matchesParticipant(value, participants) {
   if (!value) return false
   if (participants.exact.has(String(value))) return true
-  const n = digits(value)
-  return Boolean(n && participants.numeric.has(n))
+
+  const number = digits(value)
+  return Boolean(number && participants.numeric.has(number))
 }
 
 function subbotBelongsToGroup(bot, groupId, participants) {
@@ -120,20 +146,38 @@ export async function getAvailableGroupInstances(
   const participants = await groupParticipants(sock, groupId)
   const principal = getPrincipalPresence()
 
+  const currentIsPrincipal = instanceType === 'principal'
+  const principalAlive =
+    currentIsPrincipal ||
+    isInstanceAlive('principal', 'principal')
+
   const principalPresent =
-    instanceType === 'principal' ||
-    (principal.groups || []).includes(groupId) ||
-    matchesParticipant(principal.jid, participants)
+    principalAlive &&
+    (
+      currentIsPrincipal ||
+      (principal.groups || []).includes(groupId) ||
+      matchesParticipant(principal.jid, participants)
+    )
 
   const subbots = listSubbots()
     .filter(bot => bot.status === 'connected')
-    .filter(bot =>
-      subbotBelongsToGroup(bot, groupId, participants) ||
-      (
+    .filter(bot => {
+      const botId = String(bot.id || '')
+      const currentSelf =
         instanceType === 'subbot' &&
-        String(bot.id) === String(instanceId)
+        botId === String(instanceId || '')
+
+      const alive =
+        currentSelf ||
+        isInstanceAlive('subbot', botId)
+
+      if (!alive) return false
+
+      return (
+        subbotBelongsToGroup(bot, groupId, participants) ||
+        currentSelf
       )
-    )
+    })
 
   if (
     instanceType === 'subbot' &&
@@ -152,7 +196,26 @@ export async function getAvailableGroupInstances(
     String(a.id || '').localeCompare(String(b.id || ''))
   )
 
-  return { principalPresent, principal, subbots }
+  return {
+    principalPresent,
+    principal,
+    subbots
+  }
+}
+
+function availableIds(available) {
+  return new Set([
+    ...(available.principalPresent ? ['principal'] : []),
+    ...available.subbots.map(bot => String(bot.id))
+  ])
+}
+
+function controllerId(available) {
+  if (available.principalPresent) return 'principal'
+  if (available.subbots.length) {
+    return String(available.subbots[0].id)
+  }
+  return ''
 }
 
 export async function resolveGroupInstance({
@@ -168,42 +231,36 @@ export async function resolveGroupInstance({
     { instanceType, instanceId }
   )
 
-  const ids = new Set([
-    ...(available.principalPresent ? ['principal'] : []),
-    ...available.subbots.map(bot => String(bot.id))
-  ])
+  const ids = availableIds(available)
+  const controlId = controllerId(available)
 
   if (explicit && ids.has(String(explicit))) {
     return {
       id: String(explicit),
+      controlId: String(explicit),
       source: 'manual',
       explicit: String(explicit),
       ...available
     }
   }
 
-  if (available.principalPresent) {
+  if (ids.size) {
     return {
-      id: 'principal',
-      source: explicit ? 'fallback' : 'automatic',
+      id: 'all',
+      controlId,
+      source: explicit ? 'fallback-all' : 'free',
       explicit: explicit || null,
       ...available
     }
   }
 
-  if (available.subbots.length) {
-    return {
-      id: String(available.subbots[0].id),
-      source: explicit ? 'fallback' : 'automatic',
-      explicit: explicit || null,
-      ...available
-    }
-  }
+  const self = instanceType === 'principal'
+    ? 'principal'
+    : String(instanceId || '')
 
   return {
-    id: instanceType === 'principal'
-      ? 'principal'
-      : String(instanceId || ''),
+    id: 'all',
+    controlId: self,
     source: 'self-fallback',
     explicit: explicit || null,
     ...available
@@ -215,5 +272,29 @@ export async function shouldHandleGroup(options) {
   const self = options.instanceType === 'principal'
     ? 'principal'
     : String(options.instanceId || '')
-  return { handle: route.id === self, route }
+
+  if (route.id !== 'all') {
+    return {
+      handle: route.id === self,
+      route
+    }
+  }
+
+  const commandName = String(options.commandName || '').toLowerCase()
+
+  if (CONTROL_COMMANDS.has(commandName)) {
+    return {
+      handle: route.controlId === self,
+      route
+    }
+  }
+
+  const ids = availableIds(route)
+
+  return {
+    handle:
+      route.source === 'self-fallback' ||
+      ids.has(self),
+    route
+  }
 }

@@ -37,6 +37,8 @@ import { getSubbotConfig, watchSubbotConfig } from './lib/subbotConfigStore.js'
 import { shouldHandleGroup } from './lib/instanceRouter.js'
 import { recordCommandError, commandErrorMessage } from './lib/commandErrors.js'
 import { handleAdminParticipantUpdate } from './lib/adminEvents.js'
+import { checkCommandRate, rateLimitMessage } from './lib/commandGuard.js'
+import { createInstanceHeartbeat } from './lib/instanceHeartbeat.js'
 
 const args = process.argv.slice(2)
 const arg = name => {
@@ -49,6 +51,9 @@ const phone = arg('--phone') || id
 const pairingRequestId = arg('--pairing-request-id') || ''
 
 if (!id || !phone) throw new Error('Faltan --id y --phone')
+
+const instanceHeartbeat = createInstanceHeartbeat('subbot', id)
+let reconnectAttempts = 0
 
 const logger = pino({ level: process.env.BAILEYS_LOG_LEVEL || 'silent' })
 const sessionPath = path.resolve('sessions', 'subbots', id)
@@ -357,6 +362,7 @@ async function requestDefaultPairingCode(sock) {
 async function cleanup(reason = 'sesión cerrada') {
   if (cleaningUp) return
   cleaningUp = true
+  instanceHeartbeat.stop()
 
   const entry = getSubbot(id)
 
@@ -425,6 +431,9 @@ async function start() {
     )?.output?.statusCode
 
     if (update.connection === 'open') {
+      reconnectAttempts = 0
+      instanceHeartbeat.setOnline(true)
+
       upsertSubbot({
         id,
         phone,
@@ -459,6 +468,7 @@ async function start() {
     }
 
     if (update.connection === 'close') {
+      instanceHeartbeat.setOnline(false)
       if (cleaningUp) return
 
       if (statusCode === DisconnectReason.loggedOut) {
@@ -474,12 +484,22 @@ async function start() {
         return
       }
 
+      reconnectAttempts += 1
+      const delay = Math.min(
+        30_000,
+        4000 * (2 ** Math.max(0, reconnectAttempts - 1))
+      )
+
+      console.log(
+        `[SUBBOT RECONNECT] ${id}: reintento en ${Math.round(delay / 1000)}s`
+      )
+
       setTimeout(() => {
         start().catch(error => {
           console.error('[SUBBOT RECONNECT]', error)
           process.exitCode = 1
         })
-      }, 4000)
+      }, delay)
     }
   })
 
@@ -590,6 +610,8 @@ async function start() {
     if (type !== 'notify') return
 
     for (const msg of messages) {
+      let commandSender = ''
+
       try {
         if (!msg.message || msg.key.remoteJid === 'status@broadcast') continue
 
@@ -602,6 +624,7 @@ async function start() {
           msg.key.remoteJid ||
           ''
         )
+        commandSender = sender
         const text = extractText(msg.message)
         const senderIsOwner = isOwner(sender)
         const senderIsSubOwner = isSubOwner(sender)
@@ -649,14 +672,46 @@ async function start() {
           continue
         }
 
+        let groupRoute = null
+
         if (chat.endsWith('@g.us')) {
-          const { handle } = await shouldHandleGroup({
+          const routing = await shouldHandleGroup({
             sock,
             groupId: chat,
             instanceType: 'subbot',
-            instanceId: id
+            instanceId: id,
+            commandName: command.name || raw
           })
-          if (!handle) continue
+
+          if (!routing.handle) continue
+          groupRoute = routing.route
+        }
+
+        const rate = checkCommandRate({
+          sender,
+          chat,
+          messageId: msg.key?.id || ''
+        })
+
+        if (!rate.allow) {
+          const shouldWarn =
+            rate.notify &&
+            (
+              !groupRoute ||
+              groupRoute.id === String(id) ||
+              (
+                groupRoute.id === 'all' &&
+                groupRoute.controlId === String(id)
+              )
+            )
+
+          if (shouldWarn) {
+            await sock.sendMessage(chat, {
+              text: rateLimitMessage(rate)
+            }, { quoted: msg }).catch(() => {})
+          }
+
+          continue
         }
 
         await command.execute({
@@ -683,7 +738,7 @@ async function start() {
         const chat = msg.key.remoteJid
         const commandText = extractText(msg.message || {})
         const code = recordCommandError({
-          sender,
+          sender: commandSender,
           chat,
           text: commandText,
           error,
