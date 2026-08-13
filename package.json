@@ -1,7 +1,7 @@
 {
   "name": "nero-bot",
-  "version": "1.16.0",
-  "description": "Nero Bot v1.16.0: nuevo YouTube UI, playlist, transcript, créditos y TikTok carousel",
+  "version": "1.16.1",
+  "description": "Nero Bot v1.16.1: TikTok Search vuelve a lista estable",
   "type": "module",
   "main": "src/index.js",
   "scripts": {

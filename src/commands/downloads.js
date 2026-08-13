@@ -707,71 +707,55 @@ export const tiktokSearch={name:'tiktoksearch',aliases:['ttsearch','tts','tiktok
   const input=queryText(ctx.args)
   if(!input)throw new Error(usage('tts','<búsqueda>'))
 
-  const limit=Math.min(5,Math.max(1,Number(config.searchLimit||5)))
+  const limit=Math.min(
+    10,
+    Math.max(1,Number(config.searchLimit||5))
+  )
+
   const result=await searchTikTokWithFallback(input,limit)
   const list=result.list
+
+  if(!list.length)throw new Error('No encontré resultados en TikTok.')
+
   const token=saveSelection('tiktok-search',list)
   const prefix=activePrefix(ctx)
-  const cards=[]
 
-  for(const [index,item] of list.entries()){
+  const rows=list.map((item,index)=>{
     const username=item.author?.unique_id||item.username||'usuario'
     const stats=item.stats||{}
-    const original=
-      item.video_url||
-      item.share_url||
-      item.links?.tiktok||
-      (item.id&&username!=='usuario'
-        ? `https://www.tiktok.com/@${username}/video/${item.id}`
-        : '')
+    const duration=item.duration??'--'
 
-    let image=await getFallbackTikTokCover()
-    if(item.cover){
-      try{
-        image=await fetchImageBuffer(item.cover)
-      }catch(error){
-        console.warn('[TIKTOK SEARCH] portada fallback:',error?.message||error)
-      }
+    return {
+      header:`Resultado ${index+1}`,
+      title:(item.title||'Sin título').slice(0,80),
+      description:[
+        `@${username}`,
+        `${duration}s`,
+        `${stats.views||0} vistas`
+      ].join(' • ').slice(0,100),
+      id:`${prefix}ttget ${token} ${index}`
     }
+  })
 
-    cards.push({
-      img:image,
-      titulo:`TikTok • Resultado ${index+1}`,
-      body:[
-        `*${item.title||'Sin título'}*`,
-        `👤 @${username}`,
-        item.duration!=null?`⏱️ ${item.duration}s`:'',
-        `▶️ ${stats.views||0} vistas`,
-        stats.likes!=null?`❤️ ${stats.likes||0}`:''
-      ].filter(Boolean).join('\n'),
-      footer:NERO_CREDIT,
-      botones:[
-        {
-          tipo:'reply',
-          texto:'🎬 Descargar',
-          payload:`${prefix}ttget ${token} ${index}`
-        },
-        ...(original?[{
-          tipo:'url',
-          texto:'🔗 Ver TikTok',
-          payload:original
-        }]:[])
-      ]
-    })
-  }
+  const first=list[0]
 
-  await enviarCarrusel(
-    ctx.sock,
-    ctx.chat,
-    [
-      `*TikTok Search:* ${input}`,
-      `Proveedor: ${result.provider}`,
-      `Resultados: ${cards.length}`
+  await sendInteractive(ctx.sock,ctx.chat,{
+    title:'TikTok Buscador',
+    body:[
+      `Resultados para: *${input}*`,
+      `Proveedor: *${result.provider}*`,
+      '',
+      'Selecciona un video de la lista para descargarlo.'
     ].join('\n'),
-    NERO_CREDIT,
-    cards,
-    {quoted:ctx.msg}
-  )
+    footer:NERO_CREDIT,
+    media:first?.cover?{image:{url:first.cover}}:null,
+    buttons:[
+      singleSelect(
+        'Ver resultados',
+        [{title:'Resultados de TikTok',rows}]
+      )
+    ]
+  },ctx.msg)
 })}}
 
 export const tiktokGet={name:'ttget',aliases:['tiktokget','ttselect'],async execute(ctx){return apiTask(ctx,async()=>{
