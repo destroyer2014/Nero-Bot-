@@ -13,6 +13,8 @@ const categories = {
     description: 'Buscadores, música e información.',
     entries: [
       '.play <nombre>',
+      '.ytsearch <búsqueda>',
+      '.ytplaylist <url> [límite]',
       '.tts <búsqueda>',
       '.spotify <búsqueda>',
       '.ytmusic <búsqueda>',
@@ -91,7 +93,8 @@ const categories = {
       '.ssweb <url>',
       '.hd',
       '.removebg',
-      '.transcribir'
+      '.transcribir',
+      '.yttranscript <url> [idioma]'
     ]
   },
   anime: {

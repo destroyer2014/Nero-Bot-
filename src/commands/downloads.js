@@ -17,6 +17,9 @@ const queryText = args => args.join(' ').trim()
 const youtubeUrl = id => `https://www.youtube.com/watch?v=${id}`
 const musicUrl = id => `https://music.youtube.com/watch?v=${id}`
 const spotifyTrackUrl = id => `https://open.spotify.com/track/${id}`
+const NERO_CREDIT = 'Nero AI™ | ©ArcadiaCorps'
+const activePrefix = ctx => ctx?.prefix || ctx?.subbotConfig?.prefix || config.prefix
+const withNeroCredit = text => `${String(text || '').trim()}\n\n> ${NERO_CREDIT}`.trim()
 
 async function fetchImageBuffer(url, timeoutMs = 20000) {
   if (!url) throw new Error('Portada no disponible.')
@@ -87,32 +90,141 @@ async function directMedia(ctx, endpoint, params, captionBuilder = null, options
     if (pickDownloadUrl(item)) break
     if (attempt < attempts) await new Promise(resolve => setTimeout(resolve, 1800 * attempt))
   }
-  const caption = captionBuilder ? captionBuilder(data, item) : `*${data.title || item.title || config.botName}*`
+  const caption = withNeroCredit(captionBuilder ? captionBuilder(data, item) : `*${data.title || item.title || config.botName}*`)
   await sendRemoteMedia(ctx.sock, ctx.chat, item, { quoted: ctx.msg, caption, forceDocument: options.forceDocument })
 }
 
 export const play = {
-  name: 'play', aliases: ['youtube','yt'],
-  async execute(ctx) { return apiTask(ctx, async () => {
-    const q = queryText(ctx.args); if (!q) throw new Error(usage('play','<nombre>'))
-    const data = await apiGet('/ytsearch', { q, limit: config.searchLimit })
-    if (!data.results?.length) throw new Error('No encontré resultados en YouTube.')
-    const token = saveSelection('youtube', data.results)
-    const first = data.results[0]
-    const rows = data.results.map((r,i)=>({ header: `Resultado ${i+1}`, title: r.title.slice(0,80), description: `${r.channel || 'YouTube'} • ${formatDuration(r.duration_seconds) || 'duración desconocida'}`, id: `${config.prefix}playpick ${token} ${i}` }))
-    await sendInteractive(ctx.sock, ctx.chat, {
-      title: 'YouTube Downloader', body: `Resultados para: *${q}*\nSelecciona un video.`, media: first.thumbnail ? { image: { url:first.thumbnail } } : null,
-      buttons: [singleSelect('Ver resultados', [{ title:'YouTube', rows }])]
-    }, ctx.msg)
-  })}
+  name: 'play',
+  aliases: ['youtube','yt'],
+  async execute(ctx) {
+    return apiTask(ctx, async () => {
+      const q = queryText(ctx.args)
+      if (!q) throw new Error(usage('play','<nombre>'))
+      const data = await apiGet('/ytsearch', { q, limit: Math.max(1, Number(config.searchLimit || 5)) })
+      const item = data.results?.[0]
+      if (!item) throw new Error('No encontré resultados en YouTube.')
+
+      const prefix = activePrefix(ctx)
+      const duration = formatDuration(item.duration_seconds) || 'No disponible'
+      const published = item.upload_date || item.published_at || 'No disponible'
+      const author = item.channel || item.author || 'YouTube'
+      const url = item.url || youtubeUrl(item.video_id || item.id)
+
+      await sendInteractive(ctx.sock, ctx.chat, {
+        title: 'YouTube Downloader',
+        body: [
+          '╭─「 *YouTube Downloader* 」',
+          `│➤ *Título:* ${item.title || 'Sin título'}`,
+          `│➤ *Duración:* ${duration}`,
+          `│➤ *Publicado:* ${published}`,
+          `│➤ *Autor:* ${author}`,
+          `│➤ *URL:* ${url}`,
+          '╰──────────────'
+        ].join('\n'),
+        footer: NERO_CREDIT,
+        media: item.thumbnail ? { image: { url: item.thumbnail } } : null,
+        buttons: [
+          quickReply('🎵 Audio', `${prefix}ytmp3 ${url}`),
+          quickReply('🎬 Video', `${prefix}ytmp4 ${url}`)
+        ]
+      }, ctx.msg)
+    })
+  }
 }
 
-export const playpick = { name:'playpick', aliases:[], async execute(ctx) { return apiTask(ctx, async()=>{
-  const [token,indexRaw]=ctx.args; const list=getSelection(token,'youtube'); const item=list?.[Number(indexRaw)]
-  if(!item) throw new Error('La selección venció. Ejecuta .play nuevamente.')
-  const dur=formatDuration(item.duration_seconds)
-  await sendInteractive(ctx.sock,ctx.chat,{title:'YouTube Downloader',body:[`*Título:* ${item.title}`,`*Duración:* ${dur||'No disponible'}`,`*Canal:* ${item.channel||'No disponible'}`,`*Publicado:* ${item.upload_date||'No disponible'}`,`*URL:* ${item.url}`].join('\n'),media:item.thumbnail?{image:{url:item.thumbnail}}:null,buttons:[quickReply('🎵 Audio',`${config.prefix}ytmp3 ${item.url}`),quickReply('🎬 Video',`${config.prefix}ytmp4 ${item.url}`)]},ctx.msg)
-  })}}
+export const playpick = {
+  name: 'playpick',
+  aliases: [],
+  async execute(ctx) {
+    return apiTask(ctx, async () => {
+      const [token,indexRaw] = ctx.args
+      const list = getSelection(token,'youtube')
+      const item = list?.[Number(indexRaw)]
+      if (!item) throw new Error('La selección venció. Ejecuta .play nuevamente.')
+
+      const prefix = activePrefix(ctx)
+      const duration = formatDuration(item.duration_seconds) || 'No disponible'
+      const published = item.upload_date || item.published_at || 'No disponible'
+      const author = item.channel || item.author || 'YouTube'
+      const url = item.url || youtubeUrl(item.video_id || item.id)
+
+      await sendInteractive(ctx.sock, ctx.chat, {
+        title: 'YouTube Downloader',
+        body: [
+          `➤ *Título:* ${item.title || 'Sin título'}`,
+          `➤ *Duración:* ${duration}`,
+          `➤ *Publicado:* ${published}`,
+          `➤ *Autor:* ${author}`,
+          `➤ *URL:* ${url}`
+        ].join('\n'),
+        footer: NERO_CREDIT,
+        media: item.thumbnail ? { image: { url: item.thumbnail } } : null,
+        buttons: [
+          quickReply('🎵 Audio', `${prefix}ytmp3 ${url}`),
+          quickReply('🎬 Video', `${prefix}ytmp4 ${url}`)
+        ]
+      }, ctx.msg)
+    })
+  }
+}
+
+export const ytsearch = {
+  name: 'ytsearch',
+  aliases: ['yts','youtubesearch'],
+  async execute(ctx) {
+    return apiTask(ctx, async () => {
+      const q = queryText(ctx.args)
+      if (!q) throw new Error(usage('ytsearch','<búsqueda>'))
+
+      const limit = Math.min(8, Math.max(1, Number(config.searchLimit || 5)))
+      const data = await apiGet('/ytsearch', { q, limit })
+      const list = (data.results || []).slice(0, limit)
+      if (!list.length) throw new Error('No encontré resultados en YouTube.')
+
+      const prefix = activePrefix(ctx)
+      const sections = list.map((item, index) => {
+        const url = item.url || youtubeUrl(item.video_id || item.id)
+        const title = `${index + 1} | ${item.title || 'Sin título'}`.slice(0, 90)
+        const detail = [
+          item.channel || item.author || 'YouTube',
+          formatDuration(item.duration_seconds)
+        ].filter(Boolean).join(' • ').slice(0, 100)
+
+        return {
+          title,
+          rows: [
+            {
+              header: 'Audio',
+              title: `🎵 ${item.title || 'Descargar audio'}`.slice(0, 90),
+              description: detail,
+              id: `${prefix}ytmp3 ${url}`
+            },
+            {
+              header: 'Video',
+              title: `🎬 ${item.title || 'Descargar video'}`.slice(0, 90),
+              description: detail,
+              id: `${prefix}ytmp4 ${url}`
+            }
+          ]
+        }
+      })
+
+      const first = list[0]
+      await sendInteractive(ctx.sock, ctx.chat, {
+        title: 'YouTube Search',
+        body: [
+          `*Resultados:* ${q}`,
+          '',
+          'Selecciona un resultado y elige *Audio* o *Video*.'
+        ].join('\n'),
+        footer: NERO_CREDIT,
+        media: first?.thumbnail ? { image: { url: first.thumbnail } } : null,
+        buttons: [singleSelect('Seleccionar', sections)]
+      }, ctx.msg)
+    })
+  }
+}
 
 export const ytmp3={name:'ytmp3',aliases:['ytaudio'],async execute(ctx){return apiTask(ctx,async()=>{
   const url=ctx.args[0]; if(!isLikelyUrl(url)) throw new Error(usage('ytmp3','<enlace de YouTube>'))
@@ -125,7 +237,7 @@ async function prepareYoutubeVideo(url,quality){let lastError;for(let attempt=1;
 async function downloadYoutubeVideo(ctx,url,quality){
   const {data,item}=await prepareYoutubeVideo(url,quality);const downloadUrl=pickDownloadUrl(item);if(!downloadUrl)throw new Error('YouTube no entregó un enlace descargable.')
   const title=data.title||item.title||'Video de YouTube',filename=item.filename||item.file_name||`${title}.mp4`,duration=youtubeMediaDuration(item),size=youtubeMediaSizeBytes(item)
-  const caption=[`🎬 *${title}*`,`📺 Calidad: ${data.quality||item.quality||quality}`,duration?`⏱️ Duración: ${formatDuration(duration)}`:'',size?`📦 Tamaño: ${formatBytes(size)}`:''].filter(Boolean).join('\n')
+  const caption=withNeroCredit([`🎬 *${title}*`,`📺 Calidad: ${data.quality||item.quality||quality}`,duration?`⏱️ Duración: ${formatDuration(duration)}`:'',size?`📦 Tamaño: ${formatBytes(size)}`:''].filter(Boolean).join('\n'))
   const long=duration>=3600,large=size>Number(config.maxUploadBytes||0);let reason=long?'el video dura una hora o más':large?'el archivo supera el tamaño del envío normal':''
   if(!reason){try{await sendRemoteMedia(ctx.sock,ctx.chat,item,{quoted:ctx.msg,caption});return}catch(e){console.warn('[YTMP4] envío normal falló; usando documento:',e?.message||e);reason='WhatsApp no pudo subirlo como video normal'}}
   await ctx.sock.sendMessage(ctx.chat,{text:['⚠️ *Este video no se puede enviar de forma normal.*',`Motivo: ${reason}.`,'','📦 Nero lo descargará al VPS y lo enviará como *archivo MP4*.','🧩 Si supera el límite por archivo, se dividirá automáticamente en varias partes.','⏳ Esta operación permanece dentro de la *cola de descarga pesada*.'].join('\n')},{quoted:ctx.msg}).catch(()=>{})
@@ -135,6 +247,126 @@ export const ytmp4={name:'ytmp4',aliases:['ytvideo'],async execute(ctx){return a
   const url=ctx.args[0]; const quality=ctx.args[1]||'360p'; if(!isLikelyUrl(url)) throw new Error(usage('ytmp4','<enlace> [360p]'))
   await runDownloadJob(ctx,'heavy','.ytmp4',()=>downloadYoutubeVideo(ctx,url,quality))
 })}}
+
+export const ytplaylist = {
+  name: 'ytplaylist',
+  aliases: ['playlistyt','ytpl'],
+  async execute(ctx) {
+    return apiTask(ctx, async () => {
+      const url = ctx.args[0]
+      if (!isLikelyUrl(url)) throw new Error(usage('ytplaylist','<url> [límite]'))
+
+      const requested = Number(ctx.args[1] || config.searchLimit || 5)
+      const limit = Math.min(10, Math.max(1, Number.isFinite(requested) ? requested : 5))
+
+      const data = await apiGet('/youtube/playlist', { url, limit }, { timeoutMs: 180000 })
+      const tracks = (data.tracks || []).slice(0, limit)
+      if (!tracks.length) throw new Error('No encontré videos disponibles en esa playlist.')
+
+      const prefix = activePrefix(ctx)
+      const sections = tracks.map((track, index) => {
+        const trackUrl = track.url || youtubeUrl(track.id)
+        const detail = [
+          track.author || 'YouTube',
+          formatDuration(track.duration_seconds)
+        ].filter(Boolean).join(' • ').slice(0, 100)
+
+        return {
+          title: `${index + 1} | ${track.title || 'Video'}`.slice(0, 90),
+          rows: [
+            {
+              header: 'Audio',
+              title: `🎵 ${track.title || 'Audio'}`.slice(0, 90),
+              description: detail,
+              id: `${prefix}ytmp3 ${trackUrl}`
+            },
+            {
+              header: 'Video',
+              title: `🎬 ${track.title || 'Video'}`.slice(0, 90),
+              description: detail,
+              id: `${prefix}ytmp4 ${trackUrl}`
+            }
+          ]
+        }
+      })
+
+      await sendInteractive(ctx.sock, ctx.chat, {
+        title: 'YouTube Playlist',
+        body: [
+          `*${data.title || 'Playlist de YouTube'}*`,
+          `Autor: ${data.author || 'No disponible'}`,
+          `Mostrando: ${tracks.length}`,
+          data.total_available ? `Total disponible: ${data.total_available}` : '',
+          '',
+          'Elige una pista y selecciona *Audio* o *Video*.'
+        ].filter(Boolean).join('\n'),
+        footer: NERO_CREDIT,
+        media: data.thumbnail ? { image: { url: data.thumbnail } } : null,
+        buttons: [singleSelect('Elegir pista', sections)]
+      }, ctx.msg)
+    })
+  }
+}
+
+export const yttranscript = {
+  name: 'yttranscript',
+  aliases: ['transcript','transcripcionyt','yttexto'],
+  async execute(ctx) {
+    return apiTask(ctx, async () => {
+      const url = ctx.args[0]
+      const language = String(ctx.args[1] || 'es').trim().toLowerCase()
+
+      if (!isLikelyUrl(url)) {
+        throw new Error(usage('yttranscript','<url> [idioma]'))
+      }
+
+      const data = await apiGet(
+        '/youtube/transcript',
+        { url, language, whisper_fallback: true },
+        { timeoutMs: 300000 }
+      )
+
+      const transcript = String(data.text || '').trim()
+      if (!transcript) {
+        throw new Error('No encontré una transcripción disponible para ese video.')
+      }
+
+      const header = [
+        '📝 *YouTube Transcript*',
+        `🎬 ${data.title || 'Video de YouTube'}`,
+        `👤 ${data.author || 'No disponible'}`,
+        `🌐 ${data.language_name || data.language || language}`,
+        data.duration_seconds ? `⏱️ ${formatDuration(data.duration_seconds)}` : '',
+        '',
+        `> ${NERO_CREDIT}`
+      ].filter(Boolean).join('\n')
+
+      if (transcript.length <= 3200) {
+        await ctx.sock.sendMessage(
+          ctx.chat,
+          { text: `${header}\n\n${transcript}` },
+          { quoted: ctx.msg }
+        )
+        return
+      }
+
+      const safeTitle = String(data.title || 'youtube-transcript')
+        .replace(/[\\/:*?"<>|]+/g, '_')
+        .slice(0, 80)
+
+      await ctx.sock.sendMessage(ctx.chat, {
+        document: Buffer.from(transcript, 'utf8'),
+        mimetype: 'text/plain',
+        fileName: `${safeTitle}.txt`,
+        caption: [
+          header,
+          '',
+          'La transcripción es extensa, así que Nero la envió como archivo TXT.'
+        ].join('\n')
+      }, { quoted: ctx.msg })
+    })
+  }
+}
 
 export const spotify={name:'spotify',aliases:['sp'],async execute(ctx){return apiTask(ctx,async()=>{
   const input=queryText(ctx.args); if(!input) throw new Error(usage('spotify','<nombre o enlace>'))
@@ -430,7 +662,7 @@ export const stickerPack={name:'stickerpack',aliases:['stickerdetail'],async exe
 })}}
 
 
-export const tiktok={name:'tiktok',aliases:['tt'],async execute(ctx){return apiTask(ctx,async()=>{const url=ctx.args[0];if(!isLikelyUrl(url))throw new Error(usage('tiktok','<enlace>'));await runDownloadJob(ctx,'heavy','.tiktok',async()=>{const response=await evoGet('/dl/tiktok',{url},{timeoutMs:180000});const d=response.data||{};if(!d.dl)throw new Error('TikTok no entregó contenido descargable.');const author=d.author?.nickname||d.author?.unique_id||'TikTok';const caption=[`${d.type==='image'?'🖼️':'🎵'} *${d.title||'TikTok'}*`,`👤 ${author}${d.author?.unique_id?` (@${d.author.unique_id})`:''}`,d.type==='image'&&Array.isArray(d.dl)?`📷 Fotos: ${d.dl.length}`:`⏱️ ${d.duration||'No disponible'}`,`🌎 ${d.region||'--'}`,d.stats?`▶️ ${d.stats.plays||0}  ❤️ ${d.stats.likes||0}  💬 ${d.stats.comments||0}`:''].filter(Boolean).join('\n');if(d.type==='image'&&Array.isArray(d.dl)){const items=d.dl.map((image,index)=>({type:'image',download_url:image,title:`TikTok foto ${index+1}`}));await sendImageAlbum(ctx.sock,ctx.chat,items,{quoted:ctx.msg,caption});return}const videoUrl=Array.isArray(d.dl)?d.dl[0]:d.dl;if(!videoUrl)throw new Error('TikTok no entregó el video.');await sendRemoteMedia(ctx.sock,ctx.chat,{type:'video',url:videoUrl,download_url:videoUrl,mime_type:'video/mp4',filename:`TikTok-${d.id||Date.now()}.mp4`},{quoted:ctx.msg,caption})})})}}
+export const tiktok={name:'tiktok',aliases:['tt'],async execute(ctx){return apiTask(ctx,async()=>{const url=ctx.args[0];if(!isLikelyUrl(url))throw new Error(usage('tiktok','<enlace>'));await runDownloadJob(ctx,'heavy','.tiktok',async()=>{const response=await evoGet('/dl/tiktok',{url},{timeoutMs:180000});const d=response.data||{};if(!d.dl)throw new Error('TikTok no entregó contenido descargable.');const author=d.author?.nickname||d.author?.unique_id||'TikTok';const caption=withNeroCredit([`${d.type==='image'?'🖼️':'🎵'} *${d.title||'TikTok'}*`,`👤 ${author}${d.author?.unique_id?` (@${d.author.unique_id})`:''}`,d.type==='image'&&Array.isArray(d.dl)?`📷 Fotos: ${d.dl.length}`:`⏱️ ${d.duration||'No disponible'}`,`🌎 ${d.region||'--'}`,d.stats?`▶️ ${d.stats.plays||0}  ❤️ ${d.stats.likes||0}  💬 ${d.stats.comments||0}`:''].filter(Boolean).join('\n'));if(d.type==='image'&&Array.isArray(d.dl)){const items=d.dl.map((image,index)=>({type:'image',download_url:image,title:`TikTok foto ${index+1}`}));await sendImageAlbum(ctx.sock,ctx.chat,items,{quoted:ctx.msg,caption});return}const videoUrl=Array.isArray(d.dl)?d.dl[0]:d.dl;if(!videoUrl)throw new Error('TikTok no entregó el video.');await sendRemoteMedia(ctx.sock,ctx.chat,{type:'video',url:videoUrl,download_url:videoUrl,mime_type:'video/mp4',filename:`TikTok-${d.id||Date.now()}.mp4`},{quoted:ctx.msg,caption})})})}}
 
 function normalizeTikTokSearchItem(item={},provider='unknown'){
   const username=item.username||item.author?.unique_id||item.author?.username||(typeof item.author==='string'?item.author:'')||'usuario'
@@ -474,22 +706,72 @@ async function searchTikTokWithFallback(input,limit){
 export const tiktokSearch={name:'tiktoksearch',aliases:['ttsearch','tts','tiktoks'],async execute(ctx){return apiTask(ctx,async()=>{
   const input=queryText(ctx.args)
   if(!input)throw new Error(usage('tts','<búsqueda>'))
-  const limit=Math.min(10,Math.max(1,Number(config.searchLimit||5)))
+
+  const limit=Math.min(5,Math.max(1,Number(config.searchLimit||5)))
   const result=await searchTikTokWithFallback(input,limit)
   const list=result.list
   const token=saveSelection('tiktok-search',list)
-  const rows=list.map((item,index)=>{
-    const username=item.author?.unique_id||'usuario',stats=item.stats||{},duration=item.duration??'--'
-    return {header:`Resultado ${index+1}`,title:(item.title||'Sin título').slice(0,80),description:`@${username} • ${duration}s • ${stats.views||0} vistas`.slice(0,100),id:`${config.prefix}ttget ${token} ${index}`}
-  })
-  const first=list[0]
-  await sendInteractive(ctx.sock,ctx.chat,{
-    title:'TikTok Buscador',
-    body:[`Resultados para: *${input}*`,`Proveedor: *${result.provider}*`,'','Selecciona un video de la lista para descargarlo.'].join('\n'),
-    footer:'Nero Bot • ArcadiaCorps',
-    media:first?.cover?{image:{url:first.cover}}:null,
-    buttons:[singleSelect('Ver resultados',[{title:'Resultados de TikTok',rows}])]
-  },ctx.msg)
+  const prefix=activePrefix(ctx)
+  const cards=[]
+
+  for(const [index,item] of list.entries()){
+    const username=item.author?.unique_id||item.username||'usuario'
+    const stats=item.stats||{}
+    const original=
+      item.video_url||
+      item.share_url||
+      item.links?.tiktok||
+      (item.id&&username!=='usuario'
+        ? `https://www.tiktok.com/@${username}/video/${item.id}`
+        : '')
+
+    let image=await getFallbackTikTokCover()
+    if(item.cover){
+      try{
+        image=await fetchImageBuffer(item.cover)
+      }catch(error){
+        console.warn('[TIKTOK SEARCH] portada fallback:',error?.message||error)
+      }
+    }
+
+    cards.push({
+      img:image,
+      titulo:`TikTok • Resultado ${index+1}`,
+      body:[
+        `*${item.title||'Sin título'}*`,
+        `👤 @${username}`,
+        item.duration!=null?`⏱️ ${item.duration}s`:'',
+        `▶️ ${stats.views||0} vistas`,
+        stats.likes!=null?`❤️ ${stats.likes||0}`:''
+      ].filter(Boolean).join('\n'),
+      footer:NERO_CREDIT,
+      botones:[
+        {
+          tipo:'reply',
+          texto:'🎬 Descargar',
+          payload:`${prefix}ttget ${token} ${index}`
+        },
+        ...(original?[{
+          tipo:'url',
+          texto:'🔗 Ver TikTok',
+          payload:original
+        }]:[])
+      ]
+    })
+  }
+
+  await enviarCarrusel(
+    ctx.sock,
+    ctx.chat,
+    [
+      `*TikTok Search:* ${input}`,
+      `Proveedor: ${result.provider}`,
+      `Resultados: ${cards.length}`
+    ].join('\n'),
+    NERO_CREDIT,
+    cards,
+    {quoted:ctx.msg}
+  )
 })}}
 
 export const tiktokGet={name:'ttget',aliases:['tiktokget','ttselect'],async execute(ctx){return apiTask(ctx,async()=>{
@@ -670,7 +952,7 @@ export const anime={name:'anime',aliases:['animesub'],async execute(ctx){return 
     const title=info.titulo||animeName
     const filename=resolved.filename||`${title}_Episodio_${episode}.mp4`
     await ctx.sock.sendMessage(ctx.chat,{text:`🎬 *Enviando episodio, por favor espera…*\nServidor: ${source}`},{quoted:ctx.msg})
-    await sendRemoteMedia(ctx.sock,ctx.chat,{...resolved,type:'video',filename,mime_type:'video/mp4'},{quoted:ctx.msg,caption:`🎬 *${title}*\nEpisodio ${episode}\nServidor: ${source}`,forceDocument:true})
+    await sendRemoteMedia(ctx.sock,ctx.chat,{...resolved,type:'video',filename,mime_type:'video/mp4'},{quoted:ctx.msg,caption:withNeroCredit(`🎬 *${title}*\nEpisodio ${episode}\nServidor: ${source}`),forceDocument:true})
   })
 })}}
 
@@ -680,4 +962,4 @@ export const queueStatus={name:'cola',aliases:['queue'],async execute(ctx){await
 export const cancelDownload={name:'cancelardescarga',aliases:['cancelardl'],async execute(ctx){const removed=cancelUserJobs(ctx.sender);await ctx.sock.sendMessage(ctx.chat,{text:removed?`✅ Se cancelaron ${removed} descarga(s) tuyas en espera.`:'No tienes descargas esperando en la cola.'},{quoted:ctx.msg})}}
 export const clearQueue={name:'limpiarcola',aliases:['clearqueue'],async execute(ctx){if(!ctx.isStaff)throw new Error('Este comando es solo para owner y subowner.');const removed=clearWaitingQueues();await ctx.sock.sendMessage(ctx.chat,{text:`✅ Cola limpiada. Solicitudes eliminadas: ${removed}.`},{quoted:ctx.msg})}}
 
-export const downloadCommands=[play,playpick,ytmp3,ytmp4,spotify,spotifypick,ytmusic,ytmusicpick,applemusic,applemusicpick,apk,apkpick,apkmod,apkmodpick,facebook,instagram,twitch,reddit,bilibili,threads,universal,pinterest,pinterestSearch,stickerSearch,stickerPack,tiktok,tiktokSearch,tiktokGet,mediafire,mega,terabox,teraboxpick,anime,queueStatus,cancelDownload,clearQueue]
+export const downloadCommands=[play,playpick,ytsearch,ytmp3,ytmp4,ytplaylist,yttranscript,spotify,spotifypick,ytmusic,ytmusicpick,applemusic,applemusicpick,apk,apkpick,apkmod,apkmodpick,facebook,instagram,twitch,reddit,bilibili,threads,universal,pinterest,pinterestSearch,stickerSearch,stickerPack,tiktok,tiktokSearch,tiktokGet,mediafire,mega,terabox,teraboxpick,anime,queueStatus,cancelDownload,clearQueue]
