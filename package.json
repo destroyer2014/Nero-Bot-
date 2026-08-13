@@ -1,7 +1,7 @@
 {
   "name": "nero-bot",
-  "version": "1.15.1",
-  "description": "Nero Bot v1.15.1: TikTok Search DVYer con fallback EvoGB",
+  "version": "1.15.2",
+  "description": "Nero Bot v1.15.2: errores claros y cooldown correcto en descargas de anime",
   "type": "module",
   "main": "src/index.js",
   "scripts": {

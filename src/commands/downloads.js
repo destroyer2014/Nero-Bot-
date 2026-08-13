@@ -552,10 +552,53 @@ async function fetchAnime(name) {
 }
 
 const animeCooldown=new Map()
+const animeActive=new Set()
 const ANIME_WAIT=30*60*1000
 
+function animeCooldownMessage(left){
+  const totalSeconds=Math.max(1,Math.ceil(left/1000))
+  const minutes=Math.floor(totalSeconds/60)
+  const seconds=totalSeconds%60
+  return [
+    '❌ Solo puedes iniciar 1 descarga de anime cada 30 minutos.',
+    `Espera: ${minutes} min ${seconds} s`
+  ].join('\n')
+}
+
+async function runAnimeDownloadWithCooldown(ctx,task){
+  const limited=!ctx.isOwner&&!ctx.isSubOwner
+
+  if(limited){
+    const until=animeCooldown.get(ctx.sender)||0
+    const left=until-Date.now()
+
+    if(left>0){
+      throw new Error(animeCooldownMessage(left))
+    }
+
+    if(animeActive.has(ctx.sender)){
+      throw new Error(
+        'Solo puedes tener una descarga de anime en curso a la vez.'
+      )
+    }
+
+    animeActive.add(ctx.sender)
+  }
+
+  try{
+    await runDownloadJob(ctx,'heavy','.anime',task)
+
+    // El cooldown comienza únicamente después de que la descarga
+    // terminó correctamente.
+    if(limited){
+      animeCooldown.set(ctx.sender,Date.now()+ANIME_WAIT)
+    }
+  }finally{
+    if(limited)animeActive.delete(ctx.sender)
+  }
+}
+
 export const anime={name:'anime',aliases:['animesub'],async execute(ctx){return apiTask(ctx,async()=>{
-  if(!ctx.isOwner&&!ctx.isSubOwner){const until=animeCooldown.get(ctx.sender)||0;const left=until-Date.now();if(left>0){const m=Math.floor(left/60000),sec=Math.ceil((left%60000)/1000);throw new Error(`Solo puedes iniciar 1 descarga cada 30 minutos.\nEspera: ${m} min ${sec} s`)}animeCooldown.set(ctx.sender,Date.now()+ANIME_WAIT)}
   const raw=queryText(ctx.args);if(!raw)throw new Error(usage('anime','<nombre> [episodio]'))
   const parts=raw.split(/\s+/);const episode=Number(parts.at(-1));const hasEpisode=Number.isInteger(episode)&&episode>0
   if(hasEpisode)parts.pop()
@@ -563,10 +606,42 @@ export const anime={name:'anime',aliases:['animesub'],async execute(ctx){return 
   let d
   try { d=await fetchAnime(animeName) }
   catch(error){
-    if([500,502,503,504].includes(error?.status)) throw new Error('El servidor de anime está temporalmente ocupado. Inténtalo nuevamente en unos minutos.')
+    const status=Number(error?.status||0)
+    const message=String(error?.message||error||'')
+
+    if(
+      status===404||
+      /(?:anime|recurso).*(?:no encontrado|not found)/i.test(message)||
+      /(?:no encontrado|not found).*(?:anime|recurso)/i.test(message)
+    ){
+      throw new Error(`No encontré el anime "${animeName}".`)
+    }
+
+    if([500,502,503,504].includes(status)){
+      throw new Error(
+        'El servidor de anime está temporalmente ocupado. Inténtalo nuevamente en unos minutos.'
+      )
+    }
+
     throw error
   }
-  const info=d.anime_info||{};const chapters=(d.temporadas||[]).flatMap(t=>t.capitulos||[])
+
+  if(!d||typeof d!=='object'){
+    throw new Error(`No encontré el anime "${animeName}".`)
+  }
+
+  const info=d.anime_info||{}
+  const chapters=(d.temporadas||[]).flatMap(t=>t.capitulos||[])
+
+  if(!info.titulo&&!chapters.length){
+    throw new Error(`No encontré el anime "${animeName}".`)
+  }
+
+  if(info.titulo&&!chapters.length){
+    throw new Error(
+      `No encontré episodios disponibles para "${info.titulo}".`
+    )
+  }
   if(!hasEpisode){
     const rows=chapters.slice(0,50).map(c=>({header:`Episodio ${c.capitulo_numero}`,title:c.titulo_capitulo||`Episodio ${c.capitulo_numero}`,description:'Descargar episodio',id:`${config.prefix}anime ${animeName} ${c.capitulo_numero}`}))
     await sendInteractive(ctx.sock,ctx.chat,{title:info.titulo||'Anime',body:`Episodios disponibles: ${chapters.length}`,media:info.imagen_portada?{image:{url:info.imagen_portada}}:null,buttons:[singleSelect('Elegir episodio',[{title:'Episodios',rows}])]},ctx.msg);return
@@ -574,7 +649,7 @@ export const anime={name:'anime',aliases:['animesub'],async execute(ctx){return 
   const c=chapters.find(x=>Number(x.capitulo_numero)===episode);if(!c)throw new Error('No encontré ese episodio.')
   const downloads=(c.enlaces_descarga||[]).map(x=>x.url).filter(Boolean)
   if(!downloads.length) throw new Error('Este episodio no tiene enlaces de descarga disponibles.')
-  await runDownloadJob(ctx,'heavy','.anime',async()=>{
+  await runAnimeDownloadWithCooldown(ctx,async()=>{
     await ctx.sock.sendMessage(ctx.chat,{text:`📥 *Descarga iniciada*\n\nAnime: ${info.titulo||animeName}\nEpisodio: ${episode}\nEstado: preparando archivo…`},{quoted:ctx.msg})
     let resolved=null
     let source=''
