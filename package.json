@@ -1,7 +1,7 @@
 {
   "name": "nero-bot",
-  "version": "1.15.0",
-  "description": "Nero Bot v1.15.0: anti-ráfagas, failover y modo libre multi-instancia",
+  "version": "1.15.1",
+  "description": "Nero Bot v1.15.1: TikTok Search DVYer con fallback EvoGB",
   "type": "module",
   "main": "src/index.js",
   "scripts": {

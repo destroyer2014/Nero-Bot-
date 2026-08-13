@@ -432,27 +432,60 @@ export const stickerPack={name:'stickerpack',aliases:['stickerdetail'],async exe
 
 export const tiktok={name:'tiktok',aliases:['tt'],async execute(ctx){return apiTask(ctx,async()=>{const url=ctx.args[0];if(!isLikelyUrl(url))throw new Error(usage('tiktok','<enlace>'));await runDownloadJob(ctx,'heavy','.tiktok',async()=>{const response=await evoGet('/dl/tiktok',{url},{timeoutMs:180000});const d=response.data||{};if(!d.dl)throw new Error('TikTok no entregó contenido descargable.');const author=d.author?.nickname||d.author?.unique_id||'TikTok';const caption=[`${d.type==='image'?'🖼️':'🎵'} *${d.title||'TikTok'}*`,`👤 ${author}${d.author?.unique_id?` (@${d.author.unique_id})`:''}`,d.type==='image'&&Array.isArray(d.dl)?`📷 Fotos: ${d.dl.length}`:`⏱️ ${d.duration||'No disponible'}`,`🌎 ${d.region||'--'}`,d.stats?`▶️ ${d.stats.plays||0}  ❤️ ${d.stats.likes||0}  💬 ${d.stats.comments||0}`:''].filter(Boolean).join('\n');if(d.type==='image'&&Array.isArray(d.dl)){const items=d.dl.map((image,index)=>({type:'image',download_url:image,title:`TikTok foto ${index+1}`}));await sendImageAlbum(ctx.sock,ctx.chat,items,{quoted:ctx.msg,caption});return}const videoUrl=Array.isArray(d.dl)?d.dl[0]:d.dl;if(!videoUrl)throw new Error('TikTok no entregó el video.');await sendRemoteMedia(ctx.sock,ctx.chat,{type:'video',url:videoUrl,download_url:videoUrl,mime_type:'video/mp4',filename:`TikTok-${d.id||Date.now()}.mp4`},{quoted:ctx.msg,caption})})})}}
 
+function normalizeTikTokSearchItem(item={},provider='unknown'){
+  const username=item.username||item.author?.unique_id||item.author?.username||(typeof item.author==='string'?item.author:'')||'usuario'
+  const authorName=item.author?.nickname||item.author?.name||(typeof item.author==='string'?item.author:'')||username
+  const videoUrl=item.video_url||item.share_url||item.links?.tiktok||item.url||(item.id&&username!=='usuario'?`https://www.tiktok.com/@${username}/video/${item.id}`:'')
+  return {
+    ...item,
+    id:String(item.id||''),
+    title:item.title||item.description||'Sin título',
+    description:item.description||item.title||'',
+    author:{...(item.author&&typeof item.author==='object'?item.author:{}),unique_id:username,nickname:authorName},
+    cover:item.cover||item.cover_url||item.thumbnail_url||item.thumbnail||null,
+    duration:item.duration??item.duration_seconds??null,
+    stats:{...(item.stats||{}),views:item.stats?.views??item.views??0,likes:item.stats?.likes??item.likes??0,comments:item.stats?.comments??item.comments??0,shares:item.stats?.shares??item.shares??0},
+    video_url:videoUrl,
+    share_url:item.share_url||videoUrl,
+    _provider:provider
+  }
+}
+
+async function searchTikTokWithFallback(input,limit){
+  let primaryError=null
+  try{
+    const response=await apiGet('/tiktok/search',{q:input,limit})
+    const list=(response.results||[]).slice(0,limit).map(item=>normalizeTikTokSearchItem(item,'DVYer'))
+    if(list.length)return {provider:'DVYer',list}
+  }catch(error){primaryError=error;console.warn('[TIKTOK SEARCH] DVYer:',error?.message||error)}
+
+  try{
+    const response=await evoGet('/search/tiktok',{query:input})
+    const list=(response.data||[]).slice(0,limit).map(item=>normalizeTikTokSearchItem(item,'EvoGB'))
+    if(list.length)return {provider:'EvoGB',list}
+  }catch(error){
+    console.warn('[TIKTOK SEARCH] EvoGB:',error?.message||error)
+    if(primaryError)throw new Error(`TikTok Search no está disponible temporalmente. DVYer: ${primaryError?.message||'error'} • EvoGB: ${error?.message||'error'}`)
+    throw error
+  }
+  throw new Error('No encontré resultados en TikTok.')
+}
+
 export const tiktokSearch={name:'tiktoksearch',aliases:['ttsearch','tts','tiktoks'],async execute(ctx){return apiTask(ctx,async()=>{
   const input=queryText(ctx.args)
   if(!input)throw new Error(usage('tts','<búsqueda>'))
-  const response=await evoGet('/search/tiktok',{query:input})
-  const list=(response.data||[]).slice(0,10)
-  if(!list.length)throw new Error('No encontré resultados en TikTok.')
+  const limit=Math.min(10,Math.max(1,Number(config.searchLimit||5)))
+  const result=await searchTikTokWithFallback(input,limit)
+  const list=result.list
   const token=saveSelection('tiktok-search',list)
   const rows=list.map((item,index)=>{
-    const username=item.author?.unique_id||'usuario'
-    const stats=item.stats||{}
-    return {
-      header:`Resultado ${index+1}`,
-      title:(item.title||'Sin título').slice(0,80),
-      description:`@${username} • ${item.duration||'--'}s • ${stats.views||0} vistas`.slice(0,100),
-      id:`${config.prefix}ttget ${token} ${index}`
-    }
+    const username=item.author?.unique_id||'usuario',stats=item.stats||{},duration=item.duration??'--'
+    return {header:`Resultado ${index+1}`,title:(item.title||'Sin título').slice(0,80),description:`@${username} • ${duration}s • ${stats.views||0} vistas`.slice(0,100),id:`${config.prefix}ttget ${token} ${index}`}
   })
   const first=list[0]
   await sendInteractive(ctx.sock,ctx.chat,{
     title:'TikTok Buscador',
-    body:`Resultados para: *${input}*\nSelecciona un video de la lista para descargarlo.`,
+    body:[`Resultados para: *${input}*`,`Proveedor: *${result.provider}*`,'','Selecciona un video de la lista para descargarlo.'].join('\n'),
     footer:'Nero Bot • ArcadiaCorps',
     media:first?.cover?{image:{url:first.cover}}:null,
     buttons:[singleSelect('Ver resultados',[{title:'Resultados de TikTok',rows}])]
@@ -461,14 +494,13 @@ export const tiktokSearch={name:'tiktoksearch',aliases:['ttsearch','tts','tiktok
 
 export const tiktokGet={name:'ttget',aliases:['tiktokget','ttselect'],async execute(ctx){return apiTask(ctx,async()=>{
   let token,indexRaw
-  if(ctx.args.length>=2){[token,indexRaw]=ctx.args}else{
-    throw new Error('La selección venció o falta el identificador. Ejecuta .tts <búsqueda> nuevamente.')
-  }
-  const list=getSelection(token,'tiktok-search')
-  const item=list?.[Number(indexRaw)]
+  if(ctx.args.length>=2)[token,indexRaw]=ctx.args
+  else throw new Error('La selección venció o falta el identificador. Ejecuta .tts <búsqueda> nuevamente.')
+  const list=getSelection(token,'tiktok-search'),item=list?.[Number(indexRaw)]
   if(!item)throw new Error('La selección venció. Ejecuta .tts <búsqueda> nuevamente.')
-  const username=item.author?.unique_id||'usuario'
-  const original=`https://www.tiktok.com/@${username}/video/${item.id}`
+  const username=item.author?.unique_id||item.username||'usuario'
+  const original=item.video_url||item.share_url||item.links?.tiktok||(item.id&&username!=='usuario'?`https://www.tiktok.com/@${username}/video/${item.id}`:'')
+  if(!original)throw new Error('El resultado seleccionado no contiene un enlace válido de TikTok.')
   await tiktok.execute({...ctx,args:[original]})
 })}}
 
