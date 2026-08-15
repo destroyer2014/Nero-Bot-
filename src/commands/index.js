@@ -29,6 +29,7 @@ import { gachaCommands } from './gacha.js'
 import { salesCommands } from './sales.js'
 import { serverCommand } from './server.js'
 import { gameCommands } from './games.js'
+import { movieCommands } from './movies.js'
 
 const commands = [
   menu,
@@ -37,6 +38,7 @@ const commands = [
   info,
   serverCommand,
   ...gameCommands,
+  ...movieCommands,
   ...salesCommands,
   reportCommand,
   supportCommand,

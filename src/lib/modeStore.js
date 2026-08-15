@@ -46,7 +46,7 @@ export function setInstanceMode(instanceType = 'principal', instanceId = '', mod
 }
 
 export function privateCommandsAllowed(commandName = '') {
-  return new Set(['modo', 'modepick', 'code', 'jadibot', 'reportar', 'report', 'menu', 'help', 'comandos', 'ping']).has(
+  return new Set(['modo', 'modepick', 'code', 'jadibot', 'reportar', 'report', 'menu', 'help', 'comandos', 'ping', 'premium', 'addpremium', 'delpremium', 'premiumlist']).has(
     String(commandName).toLowerCase()
   )
 }

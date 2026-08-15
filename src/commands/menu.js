@@ -49,6 +49,14 @@ const categories = {
       '.npmdl <paquete>'
     ]
   },
+  peliculas: {
+    title: '🎬 MENU PELÍCULAS',
+    description: 'Búsqueda, descarga y estado Premium de películas.',
+    entries: [
+      '.pelicula <nombre>',
+      '.premium'
+    ]
+  },
   juegos: {
     title: '🎮 MENU JUEGOS',
     description: 'Juegos y diversión para grupos.',
@@ -200,7 +208,10 @@ const categories = {
       '.restart',
       '.modo',
       '.delsubbot <número>',
-      '.delsubbotsrojos'
+      '.delsubbotsrojos',
+      '.addpremium <número>',
+      '.delpremium <número>',
+      '.premiumlist'
     ]
   }
 }
@@ -217,7 +228,12 @@ const aliases = {
   grupo: 'grupos',
   subbot: 'subbots',
   inteligencia: 'ia',
-  ayuda: 'soporte'
+  ayuda: 'soporte',
+  pelicula: 'peliculas',
+  películas: 'peliculas',
+  películas: 'peliculas',
+  movie: 'peliculas',
+  movies: 'peliculas'
 }
 
 function uptimeText() {
@@ -246,13 +262,162 @@ function greetingForTimezone() {
   return { hello: 'buenas noches 🌙', wish: 'espero que tengas una linda noche' }
 }
 
+const commandDescriptions = {
+  play: 'Busca el mejor resultado de YouTube y permite elegir Audio o Video.',
+  ytsearch: 'Busca varios videos de YouTube y deja elegir Audio o Video por resultado.',
+  ytplaylist: 'Abre una playlist de YouTube y permite descargar una pista como Audio o Video.',
+  tts: 'Busca videos de TikTok y permite seleccionar uno para descargar.',
+  spotify: 'Busca o descarga canciones de Spotify.',
+  ytmusic: 'Busca o descarga música desde YouTube Music.',
+  applemusic: 'Busca o descarga canciones de Apple Music.',
+  bingimg: 'Busca imágenes en Bing.',
+  gif: 'Busca GIFs animados.',
+  wikipedia: 'Busca información resumida en Wikipedia.',
+  npm: 'Consulta información de un paquete de NPM.',
+  dni: 'Consulta información disponible para un DNI peruano.',
+  ruc: 'Consulta información disponible para un RUC peruano.',
+
+  ytmp3: 'Descarga el audio de un video de YouTube.',
+  ytmp4: 'Descarga un video de YouTube en la calidad indicada.',
+  tiktok: 'Descarga un video o contenido de TikTok mediante su enlace.',
+  ttimg: 'Descarga imágenes/fotos de una publicación de TikTok.',
+  ttmp3: 'Extrae o descarga el audio de TikTok.',
+  facebook: 'Descarga videos de Facebook.',
+  instagram: 'Descarga contenido de Instagram.',
+  twitter: 'Descarga contenido de X/Twitter.',
+  reddit: 'Descarga multimedia de Reddit.',
+  threads: 'Descarga imágenes o videos de Threads.',
+  bilibili: 'Descarga videos de Bilibili.',
+  mediafire: 'Descarga un archivo desde MediaFire.',
+  mega: 'Descarga un archivo desde MEGA.',
+  terabox: 'Explora y descarga archivos de TeraBox.',
+  gitclone: 'Descarga un repositorio Git como archivo.',
+  npmdl: 'Descarga un paquete publicado en NPM.',
+
+  pelicula: 'Busca películas y permite elegir una para descargar.',
+  premium: 'Muestra tu plan Premium y cuándo puedes descargar otra película.',
+
+  ttt: 'Inicia una partida de tres en raya.',
+  movie: 'Juego/actividad aleatoria de películas del bot.',
+  pareja: 'Calcula de forma divertida la compatibilidad entre usuarios.',
+  testgay: 'Test aleatorio de entretenimiento; no determina orientación real.',
+  ppt: 'Juega piedra, papel o tijera contra Nero.',
+  dado: 'Lanza un dado aleatorio.',
+  moneda: 'Lanza una moneda al azar.',
+
+  menusticker: 'Muestra las herramientas disponibles para stickers.',
+  s: 'Convierte una imagen o video compatible en sticker.',
+  qc: 'Crea un sticker estilo quote con texto.',
+  toimg: 'Convierte un sticker en imagen.',
+  brat: 'Genera un sticker estilo BRAT.',
+  attp: 'Genera texto animado como sticker.',
+  emojimix: 'Combina dos emojis en un sticker.',
+  wm: 'Configura temporalmente el pack y autor del sticker.',
+  setmeta: 'Define los metadatos del pack de stickers.',
+
+  ping: 'Comprueba latencia aproximada y tiempo activo de Nero.',
+  speedtest: 'Mide velocidad, ping y subida de la conexión del VPS.',
+  server: 'Muestra estado, recursos y datos del servidor de Nero.',
+  ocr: 'Extrae texto de una imagen.',
+  shazam: 'Intenta reconocer una canción desde audio o video.',
+  acortar: 'Acorta una URL.',
+  hostinfo: 'Consulta información técnica básica de un dominio.',
+  qr: 'Genera un código QR con el texto o enlace indicado.',
+  traducir: 'Traduce texto al idioma indicado.',
+  ssweb: 'Toma una captura de pantalla de una página web.',
+  hd: 'Mejora una imagen compatible.',
+  removebg: 'Elimina el fondo de una imagen.',
+  transcribir: 'Transcribe una nota de voz o audio.',
+  yttranscript: 'Obtiene la transcripción de un video de YouTube.',
+
+  reacciones: 'Muestra el menú de reacciones disponibles.',
+  animereacciones: 'Muestra reacciones con temática anime.',
+  ar: 'Envía una reacción anime del tipo indicado.',
+  girls: 'Obtiene imágenes aleatorias de la categoría seleccionada.',
+  animenews: 'Consulta noticias recientes relacionadas con anime.',
+  animeschedule: 'Consulta el calendario de emisiones de anime.',
+
+  w: 'Obtiene un personaje aleatorio del sistema Gacha.',
+  claim: 'Reclama un personaje disponible.',
+  harem: 'Muestra tu colección de personajes.',
+  character: 'Busca información de un personaje.',
+  wish: 'Añade un personaje a tu lista de deseos.',
+  balance: 'Muestra tu saldo del sistema Gacha.',
+  daily: 'Reclama tu recompensa diaria.',
+  trade: 'Inicia un intercambio con otro usuario.',
+  market: 'Abre el mercado de personajes.',
+  battle: 'Inicia un combate del sistema Gacha.',
+  gachainfo: 'Muestra información y ayuda del sistema Gacha.',
+
+  antilink: 'Activa o desactiva la expulsión automática por enlaces.',
+  antinsfw: 'Activa o desactiva la moderación NSFW del grupo.',
+  bienvenida: 'Activa o desactiva los mensajes de bienvenida.',
+  despedida: 'Activa o desactiva los mensajes de despedida.',
+  setbienvenida: 'Personaliza el texto de bienvenida del grupo.',
+  setdespedida: 'Personaliza el texto de despedida del grupo.',
+  setimgbienvenida: 'Configura la imagen usada en bienvenidas.',
+  setimgdespedida: 'Configura la imagen usada en despedidas.',
+  warn: 'Administra advertencias de usuarios y consulta sus warns.',
+  promote: 'Asciende, degrada o expulsa usuarios según el comando usado.',
+  abrir: 'Abre o cierra el grupo para que los miembros puedan escribir.',
+  tagall: 'Menciona a todos o hace una mención oculta según el comando.',
+  del: 'Elimina un mensaje respondiéndolo cuando Nero tiene permisos.',
+  groupconfig: 'Muestra la configuración actual de moderación del grupo.',
+
+  code: 'Genera un código para vincular una cuenta como SubBot.',
+  bots: 'Muestra las instancias SubBot registradas.',
+  setbot: 'Permite a un admin elegir qué instancia responderá en el grupo.',
+  principal: 'Muestra el modo de enrutamiento y la instancia seleccionada.',
+  resetprincipal: 'Devuelve el grupo al modo libre multi-instancia.',
+  modo: 'Cambia el modo de operación de una instancia de Nero.',
+  logout: 'Cierra la sesión del SubBot que ejecuta el comando.',
+  delsubbot: 'Elimina un SubBot específico del VPS.',
+  delsubbotsrojos: 'Limpia SubBots detenidos o dañados sin tocar los online.',
+
+  ia: 'Responde consultas usando la inteligencia artificial configurada.',
+  gemini: 'Consulta el modelo Gemini configurado.',
+  bot: 'Hace que Nero responda al mensaje citado.',
+  imgprompt: 'Genera o procesa un prompt para imágenes.',
+  editimg: 'Edita una imagen usando las herramientas de IA disponibles.',
+
+  soporte: 'Muestra los canales oficiales de soporte de Nero.',
+  reportar: 'Reporta el último error o un problema al equipo.',
+
+  nsfwmenu: 'Muestra los comandos de la sección NSFW.',
+  nsfwactivar: 'Activa o desactiva la sección NSFW en el grupo.',
+  ph: 'Busca contenido en el proveedor configurado para esta sección.',
+  xnxxsearch: 'Busca resultados en XNXX.',
+  xvideossearch: 'Busca resultados en XVideos.',
+
+  vv: 'Recupera contenido de visualización única cuando está permitido.',
+  ownerinfo: 'Muestra información y herramientas del Owner.',
+  restart: 'Reinicia la instancia principal de Nero.',
+  addpremium: 'Da acceso Premium ilimitado de películas a un número. Solo Owner.',
+  delpremium: 'Quita el acceso Premium de películas a un número. Solo Owner.',
+  premiumlist: 'Lista los usuarios Premium registrados. Solo Owner.'
+}
+
+function commandDescription(entry, category) {
+  const match = String(entry || '').match(/^\.([^\s/]+)/)
+  const key = String(match?.[1] || '').toLowerCase()
+  return commandDescriptions[key] || category.description
+}
+
+function commandEntryLines(entry, category, prefix) {
+  return [
+    `┆ ✦ *${entry.replace(/^\./, prefix)}*`,
+    `┆   ↳ ${commandDescription(entry, category)}`,
+    '┆'
+  ]
+}
+
 function categoryBody(category, prefix) {
   return [
     `╭─• ˚₊‧ ✦ *${category.title}* ‧₊˚ •─╮`,
     '┆',
     `┆ > ✐ ${category.description}`,
     '┆',
-    ...category.entries.map(entry => `┆ ✦ *${entry.replace(/^\./, prefix)}*`),
+    ...category.entries.flatMap(entry => commandEntryLines(entry, category, prefix)),
     '┆',
     `┆ ↩ Volver: *${prefix}menu*`,
     '╰─── •·:*¨༺ ♱ ✦ ♱ ༻¨*:·• ───╯',
@@ -265,6 +430,7 @@ function categoryList(prefix) {
   const rows = [
     ['BUSQUEDA', 'busqueda', 'Buscadores e información'],
     ['DESCARGAS', 'descargas', 'Multimedia y archivos'],
+    ['PELICULAS', 'peliculas', 'Búsqueda, descargas y Premium'],
     ['JUEGOS', 'juegos', 'Diversión para grupos'],
     ['STICKERS', 'stickers', 'Creación y edición'],
     ['UTILIDADES', 'utilidades', 'Ping, Speedtest y herramientas'],

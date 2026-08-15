@@ -11,7 +11,13 @@ const CONTROL_COMMANDS = new Set([
   'setbot',
   'principalpick',
   'principal',
-  'resetprincipal'
+  'resetprincipal',
+  'pelicula',
+  'peliculapick',
+  'premium',
+  'addpremium',
+  'delpremium',
+  'premiumlist'
 ])
 
 function digits(value = '') {
