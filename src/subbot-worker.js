@@ -54,6 +54,7 @@ if (!id || !phone) throw new Error('Faltan --id y --phone')
 
 const instanceHeartbeat = createInstanceHeartbeat('subbot', id)
 let reconnectAttempts = 0
+let connectedNoticeSent = false
 
 const logger = pino({ level: process.env.BAILEYS_LOG_LEVEL || 'silent' })
 const sessionPath = path.resolve('sessions', 'subbots', id)
@@ -455,7 +456,8 @@ async function start() {
       delayedRefresh.unref?.()
 
       const entry = getSubbot(id)
-      if (entry?.requestChat) {
+      if (needsPairing && !connectedNoticeSent && entry?.requestChat) {
+        connectedNoticeSent = true
         await emitSubbotEvent({
           type: 'connected',
           chat: entry.requestChat,

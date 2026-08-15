@@ -13,6 +13,7 @@ const CONTROL_COMMANDS = new Set([
   'principal',
   'resetprincipal',
   'pelicula',
+  'peliculacatalog',
   'peliculapick',
   'premium',
   'addpremium',

@@ -32,6 +32,138 @@ import {
 const NERO_CREDIT = 'Nero AI™ | ©ArcadiaCorps'
 const MOVIE_LIMIT = 10
 
+const MOVIE_SINGLE_DOCUMENT_BYTES = Math.max(
+  100,
+  Number(process.env.MOVIE_SINGLE_DOCUMENT_MB || 1900)
+) * 1024 * 1024
+
+const MOVIE_SPLIT_PART_BYTES = Math.max(
+  100,
+  Number(process.env.MOVIE_SPLIT_PART_MB || 700)
+) * 1024 * 1024
+
+const MOVIE_CATALOGS = {
+  estrenos: {
+    title: '🎞️ Películas Estreno',
+    description: 'Películas recientes y estrenos.',
+    query: '2026'
+  },
+  accion: {
+    title: '💥 Acción y Aventura',
+    description: 'Acción, aventura y adrenalina.',
+    query: 'accion'
+  },
+  terror: {
+    title: '👻 Terror y Suspenso',
+    description: 'Terror, suspenso y misterio.',
+    query: 'terror'
+  },
+  drama: {
+    title: '🎭 Drama',
+    description: 'Historias dramáticas y emocionales.',
+    query: 'drama'
+  },
+  comedia: {
+    title: '🤣 Comedia',
+    description: 'Películas para reír.',
+    query: 'comedia'
+  },
+  romance: {
+    title: '💘 Romance',
+    description: 'Romance y historias de amor.',
+    query: 'romance'
+  },
+  sorpresa: {
+    title: '🎲 Sorpréndeme',
+    description: 'Una búsqueda aleatoria del catálogo.',
+    queries: [
+      'dragon ball',
+      'marvel',
+      'terror',
+      'comedia',
+      'romance',
+      'accion',
+      'aventura',
+      '2026'
+    ]
+  }
+}
+
+function movieCatalogQuery(category) {
+  if (category.query) return category.query
+  const list = category.queries || []
+  return list[Math.floor(Math.random() * list.length)] || '2026'
+}
+
+async function sendMovieCatalog(ctx) {
+  const prefix = prefixOf(ctx)
+
+  const rows = Object.entries(MOVIE_CATALOGS).map(([key, item]) => ({
+    header: 'Catálogo',
+    title: item.title,
+    description: item.description,
+    id: `${prefix}peliculacatalog ${key}`
+  }))
+
+  await sendInteractive(
+    ctx.sock,
+    ctx.chat,
+    {
+      title: '🍿 NERO • CATÁLOGO DE PELÍCULAS',
+      body: [
+        '🎬 *Tu cine en WhatsApp*',
+        '',
+        'Toca el botón para explorar el catálogo.',
+        '',
+        'También puedes buscar directamente:',
+        `*${prefix}pelicula spiderman*`,
+        '',
+        `💳 ${accessLabel(ctx)}`
+      ].join('\n'),
+      footer: NERO_CREDIT,
+      buttons: [
+        singleSelect(
+          '🍿 Abrir Catálogo',
+          [{
+            title: '🎬 Categorías',
+            rows
+          }]
+        )
+      ]
+    },
+    ctx.msg
+  )
+}
+
+export const peliculaCatalogCommand = {
+  name: 'peliculacatalog',
+  aliases: ['moviecatalog'],
+  description: 'Abre una categoría del catálogo de películas.',
+
+  async execute(ctx) {
+    const key = String(ctx.args?.[0] || '').trim().toLowerCase()
+    const category = MOVIE_CATALOGS[key]
+
+    if (!category) {
+      await sendMovieCatalog(ctx)
+      return
+    }
+
+    const query = movieCatalogQuery(category)
+    const data = await apiGet(
+      '/movies',
+      {
+        q: query,
+        limit: MOVIE_LIMIT
+      },
+      { timeoutMs: 120000 }
+    )
+
+    await sendMovieSearch(ctx, category.title, data)
+  }
+}
+
+
 function prefixOf(ctx) {
   return ctx?.prefix ||
     ctx?.subbotConfig?.prefix ||
@@ -349,33 +481,7 @@ async function sendMovieArchive(ctx, resolved, title) {
   const extractDir = path.join(dir, 'extracted')
 
   try {
-    await ctx.sock.sendMessage(ctx.chat, {
-      text: [
-        '📦 *Fuente comprimida detectada*',
-        `Formato: *${String(format).toUpperCase()}*`,
-        resolved.source?.size
-          ? `Tamaño: *${resolved.source.size}*`
-          : '',
-        resolved.source?.quality
-          ? `Calidad: *${resolved.source.quality}*`
-          : '',
-        '',
-        'Descargando el archivo al VPS para extraer la película…',
-        '',
-        `> ${NERO_CREDIT}`
-      ].filter(Boolean).join('\n')
-    }, { quoted: ctx.msg }).catch(() => {})
-
     await downloadLargeMediaSource(resolved.url, archiveFile)
-
-    await ctx.sock.sendMessage(ctx.chat, {
-      text: [
-        '🗜️ *Extrayendo película…*',
-        'Nero buscará automáticamente el video principal dentro del archivo.',
-        '',
-        `> ${NERO_CREDIT}`
-      ].join('\n')
-    }, { quoted: ctx.msg }).catch(() => {})
 
     await extractMovieArchive(
       archiveFile,
@@ -403,7 +509,10 @@ async function sendMovieArchive(ctx, resolved, title) {
           '',
           `> ${NERO_CREDIT}`
         ].join('\n'),
-        quoted: ctx.msg
+        quoted: ctx.msg,
+        singleDocumentMaxBytes: MOVIE_SINGLE_DOCUMENT_BYTES,
+        splitPartBytes: MOVIE_SPLIT_PART_BYTES,
+        silent: true
       }
     )
   } finally {
@@ -449,7 +558,7 @@ async function sendMovieSearch(ctx, query, data) {
     header: 'Catálogo',
     title: '📋 Volver al menú de películas',
     description: 'Ver los comandos disponibles',
-    id: `${prefix}menu peliculas`
+    id: `${prefix}pelicula`
   })
 
   const first = list[0]
@@ -494,7 +603,8 @@ export const peliculaCommand = {
     const query = String(ctx.args?.join(' ') || '').trim()
 
     if (!query) {
-      throw new Error(usage(ctx, 'pelicula <nombre>'))
+      await sendMovieCatalog(ctx)
+      return
     }
 
     const data = await apiGet(
@@ -591,12 +701,28 @@ export const peliculaPickCommand = {
                   '',
                   `> ${NERO_CREDIT}`
                 ].join('\n'),
-                quoted: ctx.msg
+                quoted: ctx.msg,
+                singleDocumentMaxBytes: MOVIE_SINGLE_DOCUMENT_BYTES,
+                splitPartBytes: MOVIE_SPLIT_PART_BYTES,
+                silent: true
               }
             )
           }
         }
       )
+
+      await ctx.sock.sendMessage(
+        ctx.chat,
+        {
+          text: [
+            '✅ *Película enviada*',
+            `Título: *${title}*`,
+            '',
+            `> ${NERO_CREDIT}`
+          ].join('\n')
+        },
+        { quoted: ctx.msg }
+      ).catch(() => {})
 
       if (limited) {
         markMovieSuccess(
@@ -805,6 +931,7 @@ export const premiumListCommand = {
 
 export const movieCommands = [
   peliculaCommand,
+  peliculaCatalogCommand,
   peliculaPickCommand,
   premiumStatusCommand,
   addPremiumCommand,

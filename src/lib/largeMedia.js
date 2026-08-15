@@ -123,25 +123,81 @@ async function sendDoc(sock,chat,file,filename,caption,quoted) {
   return sock.sendMessage(chat,{document:{url:file},mimetype:'video/mp4',fileName:filename,caption},{quoted})
 }
 
-export async function sendLargeVideoAsDocuments(sock,chat,{url,title='Video de YouTube',filename='',caption='',quoted}={}) {
+export async function sendLargeVideoAsDocuments(sock,chat,{
+  url,
+  title='Video de YouTube',
+  filename='',
+  caption='',
+  quoted,
+  singleDocumentMaxBytes=0,
+  splitPartBytes=0,
+  silent=false
+}={}) {
   if(!url) throw new Error('No existe una URL para descargar el video.')
-  const dir=await fsp.mkdtemp(path.join(os.tmpdir(),`nero-large-${randomUUID().slice(0,8)}-`))
-  const clean=safeName(title), source=path.join(dir,`${clean}.mp4`), limit=partLimit()
+
+  const dir=await fsp.mkdtemp(
+    path.join(os.tmpdir(),`nero-large-${randomUUID().slice(0,8)}-`)
+  )
+  const clean=safeName(title)
+  const source=path.join(dir,`${clean}.mp4`)
+  const normalLimit=partLimit()
+  const directLimit=singleDocumentMaxBytes>0
+    ? singleDocumentMaxBytes
+    : normalLimit
+  const splitLimit=splitPartBytes>0
+    ? splitPartBytes
+    : normalLimit
+
   try {
     const bytes=await download(url,source)
-    if(bytes<=limit){
-      await sendDoc(sock,chat,source,safeName(filename||`${clean}.mp4`),`${caption}\n\n📦 Enviado como archivo • ${formatBytes(bytes)}`,quoted)
-      return {parts:1,bytes}
+
+    if(bytes<=directLimit){
+      try {
+        await sendDoc(
+          sock,
+          chat,
+          source,
+          safeName(filename||`${clean}.mp4`),
+          `${caption}\n\n📦 ${formatBytes(bytes)}`,
+          quoted
+        )
+        return {parts:1,bytes}
+      } catch(error) {
+        if(directLimit===normalLimit) throw error
+        console.warn(
+          '[LARGE MEDIA] envío único falló, usando división:',
+          error?.message||error
+        )
+      }
     }
-    const parts=await splitMp4(source,dir,limit)
-    await sock.sendMessage(chat,{text:`🧩 *Video dividido para WhatsApp*\n📦 ${formatBytes(bytes)}\n📄 Partes: ${parts.length}\n\nSe enviarán como archivos MP4 reproducibles.`},{quoted}).catch(()=>{})
+
+    const parts=await splitMp4(source,dir,splitLimit)
+
+    if(!silent){
+      await sock.sendMessage(chat,{
+        text:
+          `🧩 *Video dividido para WhatsApp*\n`+
+          `📦 ${formatBytes(bytes)}\n`+
+          `📄 Partes: ${parts.length}`
+      },{quoted}).catch(()=>{})
+    }
+
     for(let i=0;i<parts.length;i++){
       const p=parts[i]
-      await sendDoc(sock,chat,p.file,safeName(`${clean} - Parte ${i+1} de ${parts.length}.mp4`),
-        `🎬 *${title}*\n📄 Parte ${i+1}/${parts.length}\n📦 ${formatBytes(p.size)}`,i===0?quoted:undefined)
+      await sendDoc(
+        sock,
+        chat,
+        p.file,
+        safeName(`${clean} - Parte ${i+1} de ${parts.length}.mp4`),
+        `🎬 *${title}*\n📄 Parte ${i+1}/${parts.length}\n📦 ${formatBytes(p.size)}`,
+        i===0?quoted:undefined
+      )
     }
+
     return {parts:parts.length,bytes}
-  } finally { await fsp.rm(dir,{recursive:true,force:true}).catch(()=>{}) }
+  } finally {
+    await fsp.rm(dir,{recursive:true,force:true}).catch(()=>{})
+  }
 }
 
 export async function downloadLargeMediaSource(url, target) {
@@ -155,7 +211,10 @@ export async function sendLargeVideoFileAsDocuments(sock, chat, {
   title = 'Película',
   filename = '',
   caption = '',
-  quoted
+  quoted,
+  singleDocumentMaxBytes = 0,
+  splitPartBytes = 0,
+  silent = false
 } = {}) {
   if (!file) throw new Error('No encontré el archivo de video extraído.')
 
@@ -179,20 +238,35 @@ export async function sendLargeVideoFileAsDocuments(sock, chat, {
   }
 
   const clean = safeName(title)
-  const limit = partLimit()
+  const normalLimit = partLimit()
+  const directLimit = singleDocumentMaxBytes > 0
+    ? singleDocumentMaxBytes
+    : normalLimit
+  const splitLimit = splitPartBytes > 0
+    ? splitPartBytes
+    : normalLimit
 
-  if (stat.size <= limit) {
+  if (stat.size <= directLimit) {
     const ext = path.extname(file) || '.mp4'
-    await sock.sendMessage(chat, {
-      document: { url: file },
-      mimetype: ext.toLowerCase() === '.mkv'
-        ? 'video/x-matroska'
-        : 'video/mp4',
-      fileName: safeName(filename || `${clean}${ext}`),
-      caption: `${caption}\n\n📦 Enviado como archivo • ${formatBytes(stat.size)}`
-    }, { quoted })
 
-    return { parts: 1, bytes: stat.size }
+    try {
+      await sock.sendMessage(chat, {
+        document: { url: file },
+        mimetype: ext.toLowerCase() === '.mkv'
+          ? 'video/x-matroska'
+          : 'video/mp4',
+        fileName: safeName(filename || `${clean}${ext}`),
+        caption: `${caption}\n\n📦 ${formatBytes(stat.size)}`
+      }, { quoted })
+
+      return { parts: 1, bytes: stat.size }
+    } catch (error) {
+      if (directLimit === normalLimit) throw error
+      console.warn(
+        '[MOVIE] envío como archivo único falló; usando partes:',
+        error?.message || error
+      )
+    }
   }
 
   const dir = await fsp.mkdtemp(
@@ -200,15 +274,16 @@ export async function sendLargeVideoFileAsDocuments(sock, chat, {
   )
 
   try {
-    const parts = await splitMp4(file, dir, limit)
+    const parts = await splitMp4(file, dir, splitLimit)
 
-    await sock.sendMessage(chat, {
-      text:
-        `🧩 *Película dividida para WhatsApp*\n` +
-        `📦 ${formatBytes(stat.size)}\n` +
-        `📄 Partes: ${parts.length}\n\n` +
-        'Se enviarán como archivos MP4 reproducibles.'
-    }, { quoted }).catch(() => {})
+    if (!silent) {
+      await sock.sendMessage(chat, {
+        text:
+          `🧩 *Película dividida para WhatsApp*\n` +
+          `📦 ${formatBytes(stat.size)}\n` +
+          `📄 Partes: ${parts.length}`
+      }, { quoted }).catch(() => {})
+    }
 
     for (let i = 0; i < parts.length; i += 1) {
       const p = parts[i]

@@ -53,7 +53,7 @@ const categories = {
     title: '🎬 MENU PELÍCULAS',
     description: 'Búsqueda, descarga y estado Premium de películas.',
     entries: [
-      '.pelicula <nombre>',
+      '.pelicula [nombre]',
       '.premium'
     ]
   },
@@ -294,7 +294,7 @@ const commandDescriptions = {
   gitclone: 'Descarga un repositorio Git como archivo.',
   npmdl: 'Descarga un paquete publicado en NPM.',
 
-  pelicula: 'Busca películas y permite elegir una para descargar.',
+  pelicula: 'Abre el catálogo o busca una película por nombre y permite descargarla.',
   premium: 'Muestra tu plan Premium y cuándo puedes descargar otra película.',
 
   ttt: 'Inicia una partida de tres en raya.',

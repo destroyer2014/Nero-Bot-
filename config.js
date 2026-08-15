@@ -5,7 +5,7 @@ export default {
   plugins: '60+',
   website: 'https://arcadiacorps.online/web-v2/login.html',
   serverLabel: process.env.NERO_SERVER_LABEL || 'Nero VPS',
-  version: '1.17.2',
+  version: '1.17.3',
   prefix: '.',
   timezone: 'America/Lima',
   sessionName: 'principal',

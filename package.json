@@ -1,7 +1,7 @@
 {
   "name": "nero-bot",
-  "version": "1.17.2",
-  "description": "Nero Bot v1.17.2: división adaptativa de películas grandes",
+  "version": "1.17.3",
+  "description": "Nero Bot v1.17.3: películas limpias, catálogo, archivos grandes y reconexión silenciosa",
   "type": "module",
   "main": "src/index.js",
   "scripts": {
