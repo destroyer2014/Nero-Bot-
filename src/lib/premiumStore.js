@@ -4,7 +4,7 @@ import path from 'node:path'
 const file = path.resolve('data', 'premium-users.json')
 const lockDir = path.resolve('data', 'movie-locks')
 
-export const MOVIE_WAIT_MS = 72 * 60 * 60 * 1000
+export const MOVIE_WAIT_MS = 24 * 60 * 60 * 1000
 const MOVIE_LOCK_STALE_MS = 6 * 60 * 60 * 1000
 
 function normalizeNumber(value = '') {

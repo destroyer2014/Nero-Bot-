@@ -49,11 +49,16 @@ const categories = {
       '.npmdl <paquete>'
     ]
   },
-  peliculas: {
-    title: '🎬 MENU PELÍCULAS',
-    description: 'Búsqueda, descarga y estado Premium de películas.',
+  streaming: {
+    title: '🎬 MENU STREAMING',
+    description: 'Películas, anime, episodios y Premium.',
     entries: [
       '.pelicula [nombre]',
+      '.anime [nombre]',
+      '.animenews',
+      '.animetrending',
+      '.animeschedule',
+      '.animelatest',
       '.premium'
     ]
   },
@@ -188,6 +193,17 @@ const categories = {
       '.reportar [motivo]'
     ]
   },
+  stalking: {
+    title: '🕵️ MENU STALKING',
+    description: 'Consulta información pública de perfiles y cuentas.',
+    entries: [
+      '.githubstalk <usuario>',
+      '.instagramstalk <usuario>',
+      '.robloxstalk <usuario>',
+      '.telegramstalk <canal>',
+      '.tiktokstalk <usuario>'
+    ]
+  },
   nsfw: {
     title: '🔞 MENU NSFW',
     description: 'Contenido adulto controlado por grupo.',
@@ -229,11 +245,15 @@ const aliases = {
   subbot: 'subbots',
   inteligencia: 'ia',
   ayuda: 'soporte',
-  pelicula: 'peliculas',
-  películas: 'peliculas',
-  películas: 'peliculas',
-  movie: 'peliculas',
-  movies: 'peliculas'
+  pelicula: 'streaming',
+  peliculas: 'streaming',
+  película: 'streaming',
+  películas: 'streaming',
+  movie: 'streaming',
+  movies: 'streaming',
+  cine: 'streaming',
+  streaming: 'streaming',
+  stalk: 'stalking'
 }
 
 function uptimeText() {
@@ -295,6 +315,11 @@ const commandDescriptions = {
   npmdl: 'Descarga un paquete publicado en NPM.',
 
   pelicula: 'Abre el catálogo o busca una película por nombre y permite descargarla.',
+  anime: 'Abre el catálogo de anime o busca uno directamente por nombre.',
+  animenews: 'Consulta noticias recientes relacionadas con anime.',
+  animetrending: 'Muestra los animes que están en tendencia.',
+  animeschedule: 'Consulta próximos estrenos y episodios de anime.',
+  animelatest: 'Muestra contenido reciente de anime.',
   premium: 'Muestra tu plan Premium y cuándo puedes descargar otra película.',
 
   ttt: 'Inicia una partida de tres en raya.',
@@ -334,8 +359,6 @@ const commandDescriptions = {
   animereacciones: 'Muestra reacciones con temática anime.',
   ar: 'Envía una reacción anime del tipo indicado.',
   girls: 'Obtiene imágenes aleatorias de la categoría seleccionada.',
-  animenews: 'Consulta noticias recientes relacionadas con anime.',
-  animeschedule: 'Consulta el calendario de emisiones de anime.',
 
   w: 'Obtiene un personaje aleatorio del sistema Gacha.',
   claim: 'Reclama un personaje disponible.',
@@ -382,6 +405,12 @@ const commandDescriptions = {
 
   soporte: 'Muestra los canales oficiales de soporte de Nero.',
   reportar: 'Reporta el último error o un problema al equipo.',
+
+  githubstalk: 'Consulta información pública de un perfil de GitHub.',
+  instagramstalk: 'Consulta información pública de un perfil de Instagram.',
+  robloxstalk: 'Consulta información pública de una cuenta de Roblox.',
+  telegramstalk: 'Consulta información pública de un canal de Telegram.',
+  tiktokstalk: 'Consulta información pública de un perfil de TikTok.',
 
   nsfwmenu: 'Muestra los comandos de la sección NSFW.',
   nsfwactivar: 'Activa o desactiva la sección NSFW en el grupo.',
@@ -430,7 +459,7 @@ function categoryList(prefix) {
   const rows = [
     ['BUSQUEDA', 'busqueda', 'Buscadores e información'],
     ['DESCARGAS', 'descargas', 'Multimedia y archivos'],
-    ['PELICULAS', 'peliculas', 'Búsqueda, descargas y Premium'],
+    ['STREAMING', 'streaming', 'Películas, anime y Premium'],
     ['JUEGOS', 'juegos', 'Diversión para grupos'],
     ['STICKERS', 'stickers', 'Creación y edición'],
     ['UTILIDADES', 'utilidades', 'Ping, Speedtest y herramientas'],
@@ -440,6 +469,7 @@ function categoryList(prefix) {
     ['SUBBOTS', 'subbots', 'Instancias de Nero'],
     ['IA', 'ia', 'Inteligencia artificial'],
     ['SOPORTE', 'soporte', 'Ayuda y reportes'],
+    ['STALKING', 'stalking', 'Información pública de perfiles'],
     ['NSFW', 'nsfw', 'Sección adulta'],
     ['OWNER', 'owner', 'Herramientas protegidas']
   ]

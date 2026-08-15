@@ -105,6 +105,13 @@ async function sendMovieCatalog(ctx) {
     id: `${prefix}peliculacatalog ${key}`
   }))
 
+  rows.splice(1, 0, {
+    header: 'Streaming',
+    title: '📡 Animes en Estreno',
+    description: 'Lo mejor del anime actual',
+    id: `${prefix}animeairing`
+  })
+
   await sendInteractive(
     ctx.sock,
     ctx.chat,
@@ -523,7 +530,7 @@ async function sendMovieArchive(ctx, resolved, title) {
 function accessLabel(ctx) {
   if (ctx.isOwner) return '👑 Owner • películas ilimitadas'
   if (isPremium(ctx.sender)) return '💎 Premium • películas ilimitadas'
-  return '🆓 Free • 1 película cada 72 horas'
+  return '🆓 Free • 1 película cada 24 horas'
 }
 
 async function sendMovieSearch(ctx, query, data) {
@@ -641,7 +648,7 @@ export const peliculaPickCommand = {
 
     if (!access.unlimited && access.remainingMs > 0) {
       throw new Error(
-        'Solo puedes descargar 1 película cada 72 horas.\n' +
+        'Solo puedes descargar 1 película cada 24 horas.\n' +
         `Espera: ${formatMovieWait(access.remainingMs)}`
       )
     }
@@ -769,7 +776,7 @@ export const premiumStatusCommand = {
       `Plan: *${plan}*`,
       access.unlimited
         ? '🎬 Películas: *sin límites*'
-        : '🎬 Películas: *1 cada 72 horas*'
+        : '🎬 Películas: *1 cada 24 horas*'
     ]
 
     if (!access.unlimited) {
@@ -873,7 +880,7 @@ export const delPremiumCommand = {
           ? [
               '✅ *Premium eliminado*',
               `Usuario: +${target}`,
-              'Ahora tendrá el límite Free de 1 película cada 72 horas.',
+              'Ahora tendrá el límite Free de 1 película cada 24 horas.',
               '',
               `> ${NERO_CREDIT}`
             ].join('\n')

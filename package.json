@@ -1,7 +1,7 @@
 {
   "name": "nero-bot",
-  "version": "1.17.3",
-  "description": "Nero Bot v1.17.3: películas limpias, catálogo, archivos grandes y reconexión silenciosa",
+  "version": "1.18.0",
+  "description": "Nero Bot v1.18.0: Streaming, nueva API de anime, Stalking y películas cada 24 horas",
   "type": "module",
   "main": "src/index.js",
   "scripts": {
