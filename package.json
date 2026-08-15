@@ -1,7 +1,7 @@
 {
   "name": "nero-bot",
-  "version": "1.17.1",
-  "description": "Nero Bot v1.17.1: extracción RAR y validación de películas",
+  "version": "1.17.2",
+  "description": "Nero Bot v1.17.2: división adaptativa de películas grandes",
   "type": "module",
   "main": "src/index.js",
   "scripts": {

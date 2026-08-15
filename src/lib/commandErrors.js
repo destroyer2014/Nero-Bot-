@@ -31,6 +31,7 @@ export function isExpectedCommandError(error) {
     /^No tienes /i,
     /^No encontré /i,
     /^No pude extraer /i,
+    /^No pude dividir /i,
     /^La fuente de esta película /i,
     /^No se detectaron /i,
     /^El número /i,

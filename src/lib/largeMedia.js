@@ -76,22 +76,47 @@ async function download(url,target) {
 
 async function splitMp4(input,dir,maxBytes) {
   await ffmpegReady()
-  const source=await fsp.stat(input), duration=await durationOf(input)
-  let wanted=Math.max(2,Math.ceil(source.size/(maxBytes*0.82)))
-  for(let attempt=1;attempt<=5;attempt++){
-    const prefix=`part-${attempt}-`, pattern=path.join(dir,`${prefix}%03d.mp4`)
-    await run('ffmpeg',['-hide_banner','-loglevel','error','-y','-i',input,
+  const source=await fsp.stat(input)
+  const duration=await durationOf(input)
+
+  let wanted=Math.max(2,Math.ceil(source.size/(maxBytes*0.65)))
+  const maxParts=Math.max(40,Math.min(160,Math.ceil(source.size/(maxBytes*0.30))))
+
+  for(let attempt=1;attempt<=9;attempt++){
+    const prefix=`part-${attempt}-`
+    const pattern=path.join(dir,`${prefix}%03d.mp4`)
+    const segmentSeconds=Math.max(5,duration/wanted)
+
+    console.log('[LARGE MEDIA] split attempt',{attempt,wanted,maxParts,segmentSeconds:Math.round(segmentSeconds),sourceBytes:source.size,maxBytes})
+
+    await run('ffmpeg',[
+      '-hide_banner','-loglevel','error','-y','-i',input,
       '-map','0:v:0?','-map','0:a:0?','-c','copy','-f','segment',
-      '-segment_time',String(Math.max(20,duration/wanted)),
-      '-break_non_keyframes','1','-reset_timestamps','1','-segment_format','mp4',pattern])
+      '-segment_time',String(segmentSeconds),
+      '-break_non_keyframes','1','-reset_timestamps','1','-segment_format','mp4',pattern
+    ],30*60*1000)
+
     const names=(await fsp.readdir(dir)).filter(n=>n.startsWith(prefix)&&n.endsWith('.mp4')).sort()
-    const parts=[]; let oversized=false
-    for(const name of names){const file=path.join(dir,name),st=await fsp.stat(file); if(!st.size)continue; if(st.size>maxBytes)oversized=true; parts.push({file,size:st.size})}
-    if(parts.length>=2&&!oversized) return parts
-    for(const p of parts) await fsp.rm(p.file,{force:true}).catch(()=>{})
-    wanted=Math.min(24,Math.ceil(wanted*1.5)+1)
+    const parts=[]
+    let largest=0
+
+    for(const name of names){
+      const file=path.join(dir,name),st=await fsp.stat(file)
+      if(!st.size)continue
+      largest=Math.max(largest,st.size)
+      parts.push({file,size:st.size})
+    }
+
+    if(parts.length>=2&&!parts.some(p=>p.size>maxBytes))return parts
+
+    for(const p of parts)await fsp.rm(p.file,{force:true}).catch(()=>{})
+
+    const ratio=largest>0?largest/maxBytes:1.5
+    wanted=Math.min(maxParts,Math.max(wanted+2,Math.ceil(wanted*Math.max(1.30,ratio*1.20))))
+    if(wanted>=maxParts&&attempt>=8)break
   }
-  throw new Error('No pude dividir el video en partes suficientemente pequeñas para WhatsApp.')
+
+  throw new Error('No pude dividir esta película dentro del límite de WhatsApp. Intenta nuevamente o usa una fuente de menor tamaño.')
 }
 
 async function sendDoc(sock,chat,file,filename,caption,quoted) {
