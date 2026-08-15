@@ -1,7 +1,7 @@
 {
   "name": "nero-bot",
-  "version": "1.18.0",
-  "description": "Nero Bot v1.18.0: Streaming, nueva API de anime, Stalking y películas cada 24 horas",
+  "version": "1.18.1",
+  "description": "Nero Bot v1.18.1: corrección de selección y detail de anime",
   "type": "module",
   "main": "src/index.js",
   "scripts": {

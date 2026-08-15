@@ -2,6 +2,7 @@ import config from '../../config.js'
 import { apiGet, evoGet } from '../lib/api.js'
 import { sendInteractive, singleSelect } from '../lib/interactive.js'
 import { runDownloadJob } from '../lib/downloadQueue.js'
+import { saveSelection, getSelection } from '../lib/selectionCache.js'
 import { sendLargeVideoAsDocuments } from '../lib/largeMedia.js'
 
 const NERO_CREDIT = 'Nero AI™ | ©ArcadiaCorps'
@@ -184,11 +185,12 @@ async function sendAnimeSearch(ctx, query) {
   }
 
   const prefix = prefixOf(ctx)
+  const token = saveSelection('anime-search-v2', list)
   const rows = list.map((item, index) => ({
     header: `Resultado ${index + 1}`,
     title: `🌸 ${cleanText(item.title) || 'Anime'}`.slice(0, 90),
     description: 'Ver episodios disponibles',
-    id: `${prefix}animepick ${encodeURIComponent(item.slug)}`
+    id: `${prefix}animepick ${token} ${index}`
   }))
 
   rows.push({
@@ -289,12 +291,48 @@ async function sendAnimeDiscovery(ctx, {
   )
 }
 
-async function sendAnimeDetail(ctx, slug) {
-  const data = await animeApi('detail', {
-    slug,
-    full: true,
-    limit: 50
-  }, { timeoutMs: 240000 })
+async function sendAnimeDetail(ctx, slug, selectedTitle = '') {
+  let data
+  try {
+    // Petición mínima: coincide con el endpoint que devuelve el catálogo
+    // correctamente en la documentación de DVYer.
+    data = await animeApi('detail', { slug }, { timeoutMs: 240000 })
+  } catch (error) {
+    const status = Number(error?.status || 0)
+    console.warn('[ANIME] detail falló', {
+      slug,
+      status,
+      message: error?.message || String(error)
+    })
+
+    // Si DVYer rechaza el slug seleccionado, hacemos una sola
+    // revalidación por título y usamos el slug exacto que vuelva a entregar.
+    if (status === 422 && selectedTitle) {
+      const retrySearch = await animeApi('search', {
+        q: selectedTitle,
+        limit: ANIME_SEARCH_LIMIT
+      }, { timeoutMs: 180000 })
+
+      const retry = (retrySearch.results || []).find(item =>
+        String(item?.slug || '').trim() === String(slug || '').trim()
+      ) || retrySearch.results?.[0]
+
+      const retrySlug = String(retry?.slug || '').trim()
+      if (retrySlug) {
+        console.log('[ANIME] detail reintento con slug API:', retrySlug)
+        data = await animeApi(
+          'detail',
+          { slug: retrySlug },
+          { timeoutMs: 240000 }
+        )
+        slug = retrySlug
+      } else {
+        throw error
+      }
+    } else {
+      throw error
+    }
+  }
 
   const anime = data.anime || {}
   const episodes = (data.episodes || [])
@@ -307,11 +345,16 @@ async function sendAnimeDetail(ctx, slug) {
   }
 
   const prefix = prefixOf(ctx)
-  const rows = episodes.map(item => ({
+  const episodeToken = saveSelection('anime-episodes-v2', {
+    slug,
+    title: cleanText(anime.titulo) || selectedTitle || slug,
+    episodes
+  })
+  const rows = episodes.map((item, index) => ({
     header: `Episodio ${item.episode}`,
     title: `📺 ${cleanText(item.title) || `Episodio ${item.episode}`}`.slice(0, 90),
     description: item.available === false ? 'No disponible' : 'Descargar episodio',
-    id: `${prefix}animeepisode ${encodeURIComponent(slug)} ${item.episode}`
+    id: `${prefix}animeepisode ${episodeToken} ${index}`
   }))
 
   rows.push({
@@ -408,9 +451,22 @@ export const animePick = wrap(
   [],
   'Muestra los episodios de un anime.',
   async ctx => {
-    const slug = cleanSlug(ctx.args?.[0])
-    if (!slug) throw new Error('La selección de anime no es válida.')
-    await sendAnimeDetail(ctx, slug)
+    const tokenOrSlug = String(ctx.args?.[0] || '').trim()
+    const index = Number(ctx.args?.[1])
+    const cached = getSelection(tokenOrSlug, 'anime-search-v2')
+    const selected = cached?.[index]
+
+    if (selected?.slug) {
+      const slug = String(selected.slug).trim()
+      if (!slug) throw new Error('La selección de anime no es válida.')
+      await sendAnimeDetail(ctx, slug, cleanText(selected.title))
+      return
+    }
+
+    // Compatibilidad temporal con botones generados por v1.18.0.
+    const legacySlug = cleanSlug(tokenOrSlug)
+    if (!legacySlug) throw new Error('La selección de anime venció. Busca nuevamente.')
+    await sendAnimeDetail(ctx, legacySlug)
   }
 )
 
@@ -419,10 +475,25 @@ export const animeEpisode = wrap(
   ['animeep'],
   'Descarga un episodio seleccionado.',
   async ctx => {
-    const slug = cleanSlug(ctx.args?.[0])
-    const episode = Number(ctx.args?.[1])
+    const tokenOrSlug = String(ctx.args?.[0] || '').trim()
+    const indexOrEpisode = Number(ctx.args?.[1])
+    const cached = getSelection(tokenOrSlug, 'anime-episodes-v2')
+
+    let slug = ''
+    let episode = 0
+
+    if (cached?.slug && Array.isArray(cached?.episodes)) {
+      const selectedEpisode = cached.episodes[indexOrEpisode]
+      slug = String(cached.slug || '').trim()
+      episode = Number(selectedEpisode?.episode || 0)
+    } else {
+      // Compatibilidad temporal con botones antiguos.
+      slug = cleanSlug(tokenOrSlug)
+      episode = indexOrEpisode
+    }
+
     if (!slug || !Number.isInteger(episode) || episode < 1) {
-      throw new Error('La selección del episodio no es válida.')
+      throw new Error('La selección del episodio venció. Abre nuevamente la lista.')
     }
 
     await runAnimeDownloadWithCooldown(ctx, async () => {
