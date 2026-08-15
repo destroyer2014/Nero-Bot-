@@ -1,3 +1,8 @@
+import fs from 'node:fs/promises'
+import os from 'node:os'
+import path from 'node:path'
+import { spawn } from 'node:child_process'
+import { randomUUID } from 'node:crypto'
 import config from '../../config.js'
 import { apiGet } from '../lib/api.js'
 import {
@@ -6,7 +11,11 @@ import {
 } from '../lib/interactive.js'
 import { pickDownloadUrl } from '../lib/media.js'
 import { runDownloadJob } from '../lib/downloadQueue.js'
-import { sendLargeVideoAsDocuments } from '../lib/largeMedia.js'
+import {
+  downloadLargeMediaSource,
+  sendLargeVideoAsDocuments,
+  sendLargeVideoFileAsDocuments
+} from '../lib/largeMedia.js'
 import {
   acquireMovieLock,
   addPremium,
@@ -86,36 +95,181 @@ function validYear(value) {
     : null
 }
 
-function mediafirePageFrom(data) {
-  const seen = new Set()
-  const queue = [data]
+function movieSources(data = {}) {
+  const movie = data.movie || data.result || data
+  return [
+    ...(Array.isArray(movie?.mediafire) ? movie.mediafire : []),
+    ...(Array.isArray(data?.mediafire) ? data.mediafire : [])
+  ].filter(Boolean)
+}
 
-  while (queue.length) {
-    const current = queue.shift()
+function sourceFileName(source = {}) {
+  return String(
+    source.file_name ||
+    source.filename ||
+    source.name ||
+    ''
+  ).trim()
+}
 
-    if (typeof current === 'string') {
-      if (/^https?:\/\/[^/]*mediafire\.com\//i.test(current)) {
-        return current
-      }
-      continue
+function sourceFormat(source = {}) {
+  const explicit = String(source.format || '').trim().toLowerCase()
+  if (explicit) return explicit
+  return path.extname(sourceFileName(source)).replace(/^\./, '').toLowerCase()
+}
+
+function isArchiveSource(source = {}) {
+  const format = sourceFormat(source)
+  return (
+    ['rar', 'zip', '7z'].includes(format) ||
+    /\.(rar|zip|7z)$/i.test(sourceFileName(source))
+  )
+}
+
+function safeLocalName(value = 'movie-source') {
+  return String(value || 'movie-source')
+    .replace(/[\\/:*?"<>|]+/g, '_')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 150) || 'movie-source'
+}
+
+async function runArchiveTool(command, args, timeoutMs = 30 * 60 * 1000) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(command, args, {
+      stdio: ['ignore', 'pipe', 'pipe']
+    })
+
+    let output = ''
+    let settled = false
+
+    const fail = error => {
+      if (settled) return
+      settled = true
+      reject(error)
     }
 
-    if (
-      !current ||
-      typeof current !== 'object' ||
-      seen.has(current)
-    ) continue
+    const timer = setTimeout(() => {
+      child.kill('SIGKILL')
+      fail(new Error('La extracción de la película tardó demasiado.'))
+    }, timeoutMs)
 
-    seen.add(current)
+    const capture = chunk => {
+      output = (output + String(chunk)).slice(-20000)
+    }
 
-    if (Array.isArray(current)) {
-      queue.push(...current)
-    } else {
-      queue.push(...Object.values(current))
+    child.stdout.on('data', capture)
+    child.stderr.on('data', capture)
+
+    child.on('error', error => {
+      clearTimeout(timer)
+      fail(error)
+    })
+
+    child.on('close', code => {
+      clearTimeout(timer)
+      if (settled) return
+      settled = true
+
+      if (code === 0) {
+        resolve(output)
+        return
+      }
+
+      const error = new Error(
+        `${command} terminó con código ${code}: ${output.slice(-1500)}`
+      )
+      error.toolOutput = output
+      reject(error)
+    })
+  })
+}
+
+async function extractMovieArchive(archiveFile, targetDir, password = '') {
+  await fs.mkdir(targetDir, { recursive: true })
+
+  const passwordArg = password ? `-p${password}` : null
+  const tools = ['7zz', '7z']
+  let missing = 0
+  let lastError = null
+
+  for (const command of tools) {
+    const args = [
+      'x',
+      '-y',
+      `-o${targetDir}`,
+      ...(passwordArg ? [passwordArg] : []),
+      archiveFile
+    ]
+
+    try {
+      await runArchiveTool(command, args)
+      return
+    } catch (error) {
+      if (error?.code === 'ENOENT') {
+        missing += 1
+        continue
+      }
+      lastError = error
+      break
     }
   }
 
-  return ''
+  if (missing === tools.length) {
+    throw new Error(
+      'Nero necesita 7-Zip en el VPS para extraer esta película en RAR.'
+    )
+  }
+
+  const detail = String(lastError?.toolOutput || lastError?.message || '')
+
+  if (/wrong password|password is incorrect|encrypted/i.test(detail)) {
+    throw new Error(
+      'No pude extraer el archivo de la película porque la contraseña es incorrecta o no fue proporcionada.'
+    )
+  }
+
+  throw new Error(
+    'No pude extraer el archivo RAR de la película. La fuente puede estar incompleta o dañada.'
+  )
+}
+
+async function walkFiles(dir) {
+  const result = []
+  const entries = await fs.readdir(dir, { withFileTypes: true })
+
+  for (const entry of entries) {
+    const file = path.join(dir, entry.name)
+    if (entry.isDirectory()) {
+      result.push(...await walkFiles(file))
+    } else if (entry.isFile()) {
+      result.push(file)
+    }
+  }
+
+  return result
+}
+
+async function findExtractedVideo(dir) {
+  const allowed = new Set([
+    '.mp4', '.mkv', '.webm', '.avi', '.mov', '.m4v'
+  ])
+
+  const videos = []
+
+  for (const file of await walkFiles(dir)) {
+    if (!allowed.has(path.extname(file).toLowerCase())) continue
+
+    try {
+      const stat = await fs.stat(file)
+      if (stat.size > 10 * 1024 * 1024) {
+        videos.push({ file, size: stat.size })
+      }
+    } catch {}
+  }
+
+  videos.sort((a, b) => b.size - a.size)
+  return videos[0] || null
 }
 
 async function resolveMovieDownload(slug) {
@@ -125,26 +279,22 @@ async function resolveMovieDownload(slug) {
     { timeoutMs: 240000 }
   )
 
-  let direct = pickDownloadUrl(first)
-  const mediafirePage =
-    mediafirePageFrom(first) ||
-    (
-      direct && /mediafire\.com/i.test(direct)
-        ? direct
-        : ''
-    )
+  const sources = movieSources(first)
+  const source =
+    sources.find(item => item?.verified === true) ||
+    sources[0] ||
+    null
 
-  if (mediafirePage) {
-    const resolved = await apiGet(
-      '/mediafire',
-      {
-        mode: 'link',
-        url: mediafirePage
-      },
-      { timeoutMs: 240000 }
-    )
+  if (source?.url) {
+    const resolved = /mediafire\.com/i.test(source.url)
+      ? await apiGet(
+          '/mediafire',
+          { mode: 'link', url: source.url },
+          { timeoutMs: 240000 }
+        )
+      : source
 
-    direct = pickDownloadUrl(resolved)
+    const direct = pickDownloadUrl(resolved)
 
     if (!direct) {
       throw new Error(
@@ -154,9 +304,16 @@ async function resolveMovieDownload(slug) {
 
     return {
       url: direct,
-      metadata: resolved
+      metadata: resolved,
+      source,
+      archive: isArchiveSource(source),
+      format: sourceFormat(source),
+      fileName: sourceFileName(source),
+      password: String(source.password || '')
     }
   }
+
+  const direct = pickDownloadUrl(first)
 
   if (!direct) {
     throw new Error(
@@ -166,7 +323,91 @@ async function resolveMovieDownload(slug) {
 
   return {
     url: direct,
-    metadata: first
+    metadata: first,
+    source: {},
+    archive: false,
+    format: '',
+    fileName: '',
+    password: ''
+  }
+}
+
+async function sendMovieArchive(ctx, resolved, title) {
+  const dir = await fs.mkdtemp(
+    path.join(os.tmpdir(), `nero-movie-${randomUUID().slice(0, 8)}-`)
+  )
+
+  const format =
+    resolved.format ||
+    path.extname(resolved.fileName).replace(/^\./, '') ||
+    'rar'
+
+  const archiveFile = path.join(
+    dir,
+    safeLocalName(resolved.fileName || `${title}.${format}`)
+  )
+  const extractDir = path.join(dir, 'extracted')
+
+  try {
+    await ctx.sock.sendMessage(ctx.chat, {
+      text: [
+        '📦 *Fuente comprimida detectada*',
+        `Formato: *${String(format).toUpperCase()}*`,
+        resolved.source?.size
+          ? `Tamaño: *${resolved.source.size}*`
+          : '',
+        resolved.source?.quality
+          ? `Calidad: *${resolved.source.quality}*`
+          : '',
+        '',
+        'Descargando el archivo al VPS para extraer la película…',
+        '',
+        `> ${NERO_CREDIT}`
+      ].filter(Boolean).join('\n')
+    }, { quoted: ctx.msg }).catch(() => {})
+
+    await downloadLargeMediaSource(resolved.url, archiveFile)
+
+    await ctx.sock.sendMessage(ctx.chat, {
+      text: [
+        '🗜️ *Extrayendo película…*',
+        'Nero buscará automáticamente el video principal dentro del archivo.',
+        '',
+        `> ${NERO_CREDIT}`
+      ].join('\n')
+    }, { quoted: ctx.msg }).catch(() => {})
+
+    await extractMovieArchive(
+      archiveFile,
+      extractDir,
+      resolved.password
+    )
+
+    const video = await findExtractedVideo(extractDir)
+
+    if (!video) {
+      throw new Error(
+        'No encontré un video válido dentro del archivo de la película.'
+      )
+    }
+
+    await sendLargeVideoFileAsDocuments(
+      ctx.sock,
+      ctx.chat,
+      {
+        file: video.file,
+        title,
+        filename: `${title}${path.extname(video.file) || '.mp4'}`,
+        caption: [
+          `🎬 *${title}*`,
+          '',
+          `> ${NERO_CREDIT}`
+        ].join('\n'),
+        quoted: ctx.msg
+      }
+    )
+  } finally {
+    await fs.rm(dir, { recursive: true, force: true }).catch(() => {})
   }
 }
 
@@ -335,21 +576,25 @@ export const peliculaPickCommand = {
 
           const resolved = await resolveMovieDownload(slug)
 
-          await sendLargeVideoAsDocuments(
-            ctx.sock,
-            ctx.chat,
-            {
-              url: resolved.url,
-              title,
-              filename: `${title}.mp4`,
-              caption: [
-                `🎬 *${title}*`,
-                '',
-                `> ${NERO_CREDIT}`
-              ].join('\n'),
-              quoted: ctx.msg
-            }
-          )
+          if (resolved.archive) {
+            await sendMovieArchive(ctx, resolved, title)
+          } else {
+            await sendLargeVideoAsDocuments(
+              ctx.sock,
+              ctx.chat,
+              {
+                url: resolved.url,
+                title,
+                filename: `${title}.mp4`,
+                caption: [
+                  `🎬 *${title}*`,
+                  '',
+                  `> ${NERO_CREDIT}`
+                ].join('\n'),
+                quoted: ctx.msg
+              }
+            )
+          }
         }
       )
 
