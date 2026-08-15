@@ -1,7 +1,7 @@
 {
   "name": "nero-bot",
-  "version": "1.18.1",
-  "description": "Nero Bot v1.18.1: corrección de selección y detail de anime",
+  "version": "1.18.2",
+  "description": "Nero Bot v1.18.2: pairing SubBot, audio con portada, anime resiliente y nuevos juegos",
   "type": "module",
   "main": "src/index.js",
   "scripts": {

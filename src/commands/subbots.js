@@ -1,5 +1,5 @@
 import config from '../../config.js'
-import { sendInteractive, singleSelect } from '../lib/interactive.js'
+import { sendInteractive, singleSelect, copyButton } from '../lib/interactive.js'
 import {
   canRequestCode,
   markCodeRequest,
@@ -114,6 +114,70 @@ async function connectedSubbotsInGroup(ctx) {
   })
 }
 
+const pairingWait = ms => new Promise(resolve => setTimeout(resolve, ms))
+
+function formatPairingCode(code = '') {
+  return String(code || '').match(/.{1,4}/g)?.join('-') || String(code || '')
+}
+
+async function waitForPairingCode(id, timeoutMs = 65000) {
+  const startedAt = Date.now()
+
+  while (Date.now() - startedAt < timeoutMs) {
+    const entry = getSubbot(id)
+    const code = String(entry?.pairingCode || '').trim()
+
+    if (code) return code
+
+    const status = String(entry?.status || '').toLowerCase()
+    if (['pairing-paused', 'failed', 'error'].includes(status)) {
+      throw new Error(
+        entry?.lastDisconnectReason ||
+        'WhatsApp no pudo generar el código de vinculación.'
+      )
+    }
+
+    await pairingWait(750)
+  }
+
+  throw new Error(
+    'WhatsApp tardó demasiado en generar el código. Espera un momento y vuelve a usar .code.'
+  )
+}
+
+async function deliverPairingCodeFromSubbot(ctx, id, phone) {
+  const code = await waitForPairingCode(id)
+  const formattedCode = formatPairingCode(code)
+
+  try {
+    await sendInteractive(
+      ctx.sock,
+      ctx.chat,
+      {
+        title: 'NERO • Vinculación de subbot',
+        body:
+          `✅ Sesión para: +${phone}\n\n` +
+          `Código: *${formattedCode}*\n\n` +
+          'En WhatsApp abre Dispositivos vinculados > Vincular con número.',
+        footer: 'Nero Bot • El código vence pronto',
+        buttons: [copyButton('Copiar código', code)]
+      },
+      ctx.msg
+    )
+  } catch {
+    await ctx.sock.sendMessage(
+      ctx.chat,
+      {
+        text:
+          `🔐 *NERO*\n` +
+          `Sesión: +${phone}\n` +
+          `Código: *${formattedCode}*`
+      },
+      { quoted: ctx.msg }
+    )
+  }
+}
+
 export async function createSubbotForPhone(ctx, rawPhone) {
   const phone = String(rawPhone || '').replace(/\D/g, '')
 
@@ -143,12 +207,18 @@ export async function createSubbotForPhone(ctx, rawPhone) {
     id,
     phone,
     requestChat: ctx.chat,
-    requester: ctx.sender
+    requester: ctx.sender,
+    deliveryInstanceType: ctx.instanceType || 'principal',
+    deliveryInstanceId: ctx.instanceId || null
   })
 
   await ctx.sock.sendMessage(ctx.chat, {
     text: `⏳ *NERO está preparando el código para +${phone}.*\nPuede tardar unos segundos. Recibirás el código en este mismo chat.`
   }, { quoted: ctx.msg })
+
+  if (ctx.instanceType === 'subbot') {
+    await deliverPairingCodeFromSubbot(ctx, id, phone)
+  }
 }
 
 export const codeCommand = {

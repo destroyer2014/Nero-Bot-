@@ -46,6 +46,27 @@ const cleanText = value => decode(value)
 const prefixOf = ctx =>
   ctx?.prefix || ctx?.subbotConfig?.prefix || config.prefix || '.'
 
+const transientAnimeStatuses = new Set([429, 500, 502, 503, 504])
+const animeRetryWait = ms => new Promise(resolve => setTimeout(resolve, ms))
+
+function isTransientAnimeStatus(status) {
+  return transientAnimeStatuses.has(Number(status || 0))
+}
+
+function animeErrorMessage(error) {
+  const status = Number(error?.status || 0)
+
+  if ([500, 502, 503, 504].includes(status)) {
+    return 'El servidor de anime está temporalmente ocupado. Intenta nuevamente en unos minutos.'
+  }
+
+  if (status === 429) {
+    return 'El servidor de anime recibió demasiadas solicitudes. Espera un momento e intenta nuevamente.'
+  }
+
+  return error?.message || 'No se pudo completar la consulta de anime.'
+}
+
 const wrap = (name, aliases, description, fn) => ({
   name,
   aliases,
@@ -57,7 +78,7 @@ const wrap = (name, aliases, description, fn) => ({
       console.error(`[ANIME:${name}]`, error?.message || error)
       await ctx.sock.sendMessage(
         ctx.chat,
-        { text: `❌ ${error?.message || 'No se pudo completar la consulta de anime.'}` },
+        { text: `❌ ${animeErrorMessage(error)}` },
         { quoted: ctx.msg }
       ).catch(() => {})
     }
@@ -100,6 +121,32 @@ async function animeApi(action, params = {}, options = {}) {
     { action, ...params },
     { timeoutMs: options.timeoutMs || 180000 }
   )
+}
+
+async function animeApiRetry(action, params = {}, options = {}) {
+  const attempts = Math.max(1, Number(options.attempts || 3))
+  let lastError
+
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      return await animeApi(action, params, options)
+    } catch (error) {
+      lastError = error
+      const status = Number(error?.status || 0)
+
+      if (!isTransientAnimeStatus(status) || attempt >= attempts) {
+        throw error
+      }
+
+      const delay = Math.min(8000, 1200 * attempt * attempt)
+      console.warn(
+        `[ANIME] ${action} HTTP ${status}; reintento ${attempt + 1}/${attempts} en ${delay}ms`
+      )
+      await animeRetryWait(delay)
+    }
+  }
+
+  throw lastError || new Error('No se pudo consultar el servidor de anime.')
 }
 
 function statusLabel(value = '') {
@@ -171,7 +218,7 @@ async function sendAnimeCatalog(ctx) {
 }
 
 async function sendAnimeSearch(ctx, query) {
-  const data = await animeApi('search', {
+  const data = await animeApiRetry('search', {
     q: query,
     limit: ANIME_SEARCH_LIMIT
   })
@@ -223,7 +270,7 @@ async function sendAnimeSearch(ctx, query) {
 async function findCoverForTitle(title) {
   if (!title) return null
   try {
-    const data = await animeApi('search', { q: title, limit: 1 })
+    const data = await animeApiRetry('search', { q: title, limit: 1 }, { attempts: 2 })
     return data.results?.[0]?.thumbnail || null
   } catch {
     return null
@@ -238,7 +285,7 @@ async function sendAnimeDiscovery(ctx, {
   limit = 10,
   includeBackToMovieCatalog = false
 }) {
-  const data = await animeApi(action, { limit })
+  const data = await animeApiRetry(action, { limit })
   const list = (data.results || []).slice(0, limit)
   if (!list.length) throw new Error('No encontré resultados de anime en este momento.')
 
@@ -296,7 +343,7 @@ async function sendAnimeDetail(ctx, slug, selectedTitle = '') {
   try {
     // Petición mínima: coincide con el endpoint que devuelve el catálogo
     // correctamente en la documentación de DVYer.
-    data = await animeApi('detail', { slug }, { timeoutMs: 240000 })
+    data = await animeApiRetry('detail', { slug }, { timeoutMs: 240000, attempts: 3 })
   } catch (error) {
     const status = Number(error?.status || 0)
     console.warn('[ANIME] detail falló', {
@@ -308,10 +355,10 @@ async function sendAnimeDetail(ctx, slug, selectedTitle = '') {
     // Si DVYer rechaza el slug seleccionado, hacemos una sola
     // revalidación por título y usamos el slug exacto que vuelva a entregar.
     if (status === 422 && selectedTitle) {
-      const retrySearch = await animeApi('search', {
+      const retrySearch = await animeApiRetry('search', {
         q: selectedTitle,
         limit: ANIME_SEARCH_LIMIT
-      }, { timeoutMs: 180000 })
+      }, { timeoutMs: 180000, attempts: 2 })
 
       const retry = (retrySearch.results || []).find(item =>
         String(item?.slug || '').trim() === String(slug || '').trim()
@@ -320,15 +367,37 @@ async function sendAnimeDetail(ctx, slug, selectedTitle = '') {
       const retrySlug = String(retry?.slug || '').trim()
       if (retrySlug) {
         console.log('[ANIME] detail reintento con slug API:', retrySlug)
-        data = await animeApi(
+        data = await animeApiRetry(
           'detail',
           { slug: retrySlug },
-          { timeoutMs: 240000 }
+          { timeoutMs: 240000, attempts: 2 }
         )
         slug = retrySlug
       } else {
         throw error
       }
+    } else if (isTransientAnimeStatus(status) && selectedTitle) {
+      // Tras agotar los reintentos del mismo slug, revalida una vez
+      // el resultado por título. Esto cubre catálogos que DVYer acaba
+      // de actualizar mientras el usuario estaba seleccionando.
+      const retrySearch = await animeApiRetry('search', {
+        q: selectedTitle,
+        limit: ANIME_SEARCH_LIMIT
+      }, { timeoutMs: 180000, attempts: 2 })
+
+      const retry = (retrySearch.results || []).find(item =>
+        String(item?.slug || '').trim() === String(slug || '').trim()
+      ) || retrySearch.results?.[0]
+
+      const retrySlug = String(retry?.slug || '').trim()
+      if (!retrySlug) throw error
+
+      data = await animeApiRetry(
+        'detail',
+        { slug: retrySlug },
+        { timeoutMs: 240000, attempts: 2 }
+      )
+      slug = retrySlug
     } else {
       throw error
     }
@@ -511,10 +580,10 @@ export const animeEpisode = wrap(
         { quoted: ctx.msg }
       ).catch(() => {})
 
-      const data = await animeApi('episode', {
+      const data = await animeApiRetry('episode', {
         slug,
         episode
-      }, { timeoutMs: 240000 })
+      }, { timeoutMs: 240000, attempts: 3 })
 
       const animeInfo = data.anime || {}
       const result = data.result || {}
@@ -580,7 +649,7 @@ export const animenews = wrap(
   ['noticiasanime'],
   'Consulta noticias recientes de anime.',
   async ctx => {
-    const data = await animeApi('news', { limit: 10 })
+    const data = await animeApiRetry('news', { limit: 10 })
     const list = (data.results || []).slice(0, 10)
     if (!list.length) throw new Error('No encontré noticias de anime.')
 

@@ -6,6 +6,7 @@ import { formatBytes, formatDuration, isLikelyUrl, pickDownloadUrl, sendImageAlb
 import { cancelUserJobs, clearWaitingQueues, formatQueueStatus, runDownloadJob } from '../lib/downloadQueue.js'
 import { getSelection, saveSelection } from '../lib/selectionCache.js'
 import { sendLargeVideoAsDocuments } from '../lib/largeMedia.js'
+import { sendTaggedAudio } from '../lib/audioTags.js'
 import { recordCommandError, commandErrorMessage } from '../lib/commandErrors.js'
 import sharp from 'sharp'
 import Webpmux from 'node-webpmux'
@@ -94,6 +95,214 @@ async function directMedia(ctx, endpoint, params, captionBuilder = null, options
   await sendRemoteMedia(ctx.sock, ctx.chat, item, { quoted: ctx.msg, caption, forceDocument: options.forceDocument })
 }
 
+async function prepareYoutubeAudio(url) {
+  let lastError
+
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    try {
+      const data = await apiGet(
+        '/ytmp3',
+        { mode: 'link', url },
+        { timeoutMs: 180000 }
+      )
+      const nested =
+        data.selected ||
+        data.result ||
+        data.primary_media ||
+        data.results?.[0] ||
+        {}
+      const item = {
+        ...data,
+        ...nested,
+        selected: data.selected,
+        result: data.result,
+        results: data.results
+      }
+      const audioUrl = pickDownloadUrl(item)
+      if (audioUrl) return { data, item, audioUrl }
+      lastError = new Error('YouTube todavía no entregó el audio.')
+    } catch (error) {
+      lastError = error
+    }
+
+    if (attempt < 3) {
+      await new Promise(resolve => setTimeout(resolve, 1800 * attempt))
+    }
+  }
+
+  throw lastError || new Error('No se pudo preparar el audio de YouTube.')
+}
+
+async function sendTaggedOrFallback(ctx, {
+  audioUrl,
+  title,
+  artist,
+  album,
+  year,
+  coverUrl,
+  filename,
+  fallbackItem
+}) {
+  try {
+    await sendTaggedAudio(ctx.sock, ctx.chat, {
+      audioUrl,
+      title,
+      artist,
+      album,
+      year,
+      coverUrl,
+      filename,
+      quoted: ctx.msg
+    })
+  } catch (error) {
+    console.warn('[AUDIO TAGS] fallback:', error?.message || error)
+
+    await sendRemoteMedia(
+      ctx.sock,
+      ctx.chat,
+      {
+        ...(fallbackItem || {}),
+        type: 'audio',
+        url: audioUrl,
+        download_url: audioUrl,
+        mime_type: 'audio/mpeg',
+        filename
+      },
+      {
+        quoted: ctx.msg,
+        caption: withNeroCredit([
+          `🎵 *${title || 'Audio'}*`,
+          artist ? `👤 ${artist}` : '',
+          album ? `💿 ${album}` : ''
+        ].filter(Boolean).join('\n'))
+      }
+    )
+  }
+}
+
+async function downloadYoutubeAudioTagged(ctx, url, meta = {}) {
+  const { data, item, audioUrl } = await prepareYoutubeAudio(url)
+
+  const title =
+    meta.title ||
+    data.title ||
+    item.title ||
+    'Audio de YouTube'
+
+  const artist =
+    meta.artist ||
+    meta.author ||
+    meta.channel ||
+    data.artist ||
+    data.author ||
+    data.channel ||
+    item.artist ||
+    item.author ||
+    item.channel ||
+    'YouTube'
+
+  const album =
+    meta.album ||
+    data.album ||
+    item.album ||
+    'YouTube'
+
+  const coverUrl =
+    meta.thumbnail ||
+    meta.image ||
+    meta.cover ||
+    data.thumbnail ||
+    data.image ||
+    data.cover ||
+    item.thumbnail ||
+    item.image ||
+    item.cover ||
+    ''
+
+  const year =
+    meta.year ||
+    meta.upload_date ||
+    meta.published_at ||
+    data.year ||
+    item.year ||
+    ''
+
+  const filename = `${artist} - ${title}.mp3`
+    .replace(/[\\/:*?"<>|]+/g, '_')
+
+  await sendTaggedOrFallback(ctx, {
+    audioUrl,
+    title,
+    artist,
+    album,
+    year,
+    coverUrl,
+    filename,
+    fallbackItem: item
+  })
+}
+
+async function downloadYtMusicTagged(ctx, url, meta = {}) {
+  const data = await apiGet(
+    '/ytmusic/download',
+    { mode: 'link', url },
+    { timeoutMs: 180000 }
+  )
+
+  const nested =
+    data.selected ||
+    data.result ||
+    data.primary_media ||
+    data.results?.[0] ||
+    {}
+
+  const item = {
+    ...data,
+    ...nested,
+    selected: data.selected,
+    result: data.result,
+    results: data.results
+  }
+
+  const audioUrl = pickDownloadUrl(item)
+  if (!audioUrl) {
+    throw new Error('YouTube Music no entregó un enlace de audio.')
+  }
+
+  const title = meta.title || data.title || item.title || 'YouTube Music'
+  const artist =
+    meta.artist ||
+    meta.author ||
+    data.artist ||
+    data.author ||
+    item.artist ||
+    item.author ||
+    'YouTube Music'
+  const album = meta.album || data.album || item.album || 'YouTube Music'
+  const coverUrl =
+    meta.thumbnail ||
+    meta.image ||
+    data.thumbnail ||
+    data.image ||
+    item.thumbnail ||
+    item.image ||
+    ''
+  const year = meta.year || data.year || item.year || ''
+  const filename = `${artist} - ${title}.mp3`
+    .replace(/[\\/:*?"<>|]+/g, '_')
+
+  await sendTaggedOrFallback(ctx, {
+    audioUrl,
+    title,
+    artist,
+    album,
+    year,
+    coverUrl,
+    filename,
+    fallbackItem: item
+  })
+}
+
 export const play = {
   name: 'play',
   aliases: ['youtube','yt'],
@@ -125,7 +334,7 @@ export const play = {
         footer: NERO_CREDIT,
         media: item.thumbnail ? { image: { url: item.thumbnail } } : null,
         buttons: [
-          quickReply('🎵 Audio', `${prefix}ytmp3 ${url}`),
+          quickReply('🎵 Audio', `${prefix}ytaudiopick ${saveSelection('youtube-audio-meta', [{ ...item, url }])} 0`),
           quickReply('🎬 Video', `${prefix}ytmp4 ${url}`)
         ]
       }, ctx.msg)
@@ -161,7 +370,7 @@ export const playpick = {
         footer: NERO_CREDIT,
         media: item.thumbnail ? { image: { url: item.thumbnail } } : null,
         buttons: [
-          quickReply('🎵 Audio', `${prefix}ytmp3 ${url}`),
+          quickReply('🎵 Audio', `${prefix}ytaudiopick ${saveSelection('youtube-audio-meta', [{ ...item, url }])} 0`),
           quickReply('🎬 Video', `${prefix}ytmp4 ${url}`)
         ]
       }, ctx.msg)
@@ -226,10 +435,51 @@ export const ytsearch = {
   }
 }
 
-export const ytmp3={name:'ytmp3',aliases:['ytaudio'],async execute(ctx){return apiTask(ctx,async()=>{
-  const url=ctx.args[0]; if(!isLikelyUrl(url)) throw new Error(usage('ytmp3','<enlace de YouTube>'))
-  await runDownloadJob(ctx,'light','.ytmp3',()=>directMedia(ctx,'/ytmp3',{mode:'link',url},(d)=>`🎵 *${d.title||'Audio de YouTube'}*\n📦 ${d.size_mb?`${d.size_mb} MB`:'Tamaño no disponible'}\n🎧 ${d.quality||'M4A'}`))
-})}}
+export const ytmp3 = {
+  name: 'ytmp3',
+  aliases: ['ytaudio'],
+  async execute(ctx) {
+    return apiTask(ctx, async () => {
+      const url = ctx.args[0]
+      if (!isLikelyUrl(url)) {
+        throw new Error(usage('ytmp3', '<enlace de YouTube>'))
+      }
+
+      await runDownloadJob(
+        ctx,
+        'light',
+        '.ytmp3',
+        () => downloadYoutubeAudioTagged(ctx, url)
+      )
+    })
+  }
+}
+
+export const ytaudiopick = {
+  name: 'ytaudiopick',
+  aliases: [],
+  async execute(ctx) {
+    return apiTask(ctx, async () => {
+      const list = getSelection(ctx.args[0], 'youtube-audio-meta')
+      const item = list?.[Number(ctx.args[1])]
+      if (!item) {
+        throw new Error('La selección de audio venció. Ejecuta .play nuevamente.')
+      }
+
+      const url = item.url || youtubeUrl(item.video_id || item.id)
+      if (!isLikelyUrl(url)) {
+        throw new Error('El resultado seleccionado no tiene un enlace válido.')
+      }
+
+      await runDownloadJob(
+        ctx,
+        'light',
+        '.play',
+        () => downloadYoutubeAudioTagged(ctx, url, item)
+      )
+    })
+  }
+}
 function youtubeMediaData(data={}){const nested=data.selected||data.result||data.primary_media||data.results?.[0]||{};return {...data,...nested,selected:data.selected,result:data.result,results:data.results}}
 function youtubeMediaSizeBytes(item={}){const b=Number(item.size_bytes||item.filesize_bytes||item.content_length||0);if(b>0)return b;const mb=Number(item.size_mb||item.filesize_mb||0);return mb>0?Math.round(mb*1024*1024):0}
 function youtubeMediaDuration(item={}){const n=Number(item.duration_seconds||item.duration_sec||0);if(n>0)return n;const raw=String(item.duration||'');if(!raw.includes(':'))return 0;const p=raw.split(':').map(Number);if(p.some(v=>!Number.isFinite(v)))return 0;return p.length===3?p[0]*3600+p[1]*60+p[2]:p.length===2?p[0]*60+p[1]:0}
@@ -368,41 +618,209 @@ export const yttranscript = {
   }
 }
 
-export const spotify={name:'spotify',aliases:['sp'],async execute(ctx){return apiTask(ctx,async()=>{
-  const input=queryText(ctx.args); if(!input) throw new Error(usage('spotify','<nombre o enlace>'))
-  if(isLikelyUrl(input)) return runDownloadJob(ctx,'light','.spotify',()=>downloadSpotifyEvo(ctx,input))
-  const data=await evoGet('/search/spotify',{query:input}); const list=data.result||[]; if(!list.length) throw new Error('No encontré canciones en Spotify.')
-  const token=saveSelection('spotify-evo',list); const rows=list.slice(0,10).map((r,i)=>({header:'Audio',title:`${r.artist||'Artista'} — ${r.title||'Canción'}`.slice(0,90),description:'Descargar canción',id:`${config.prefix}spotifypick ${token} ${i}`}))
-  await sendInteractive(ctx.sock,ctx.chat,{title:'Spotify Downloader',body:`Resultados: *${input}*\nSelecciona una canción.`,media:list[0]?.image?{image:{url:list[0].image}}:null,buttons:[singleSelect('Seleccionar',[{title:'Canciones',rows}])]},ctx.msg)
-})}}
+export const spotify = {
+  name: 'spotify',
+  aliases: ['sp'],
+  async execute(ctx) {
+    return apiTask(ctx, async () => {
+      const input = queryText(ctx.args)
+      if (!input) throw new Error(usage('spotify', '<nombre o enlace>'))
 
-async function downloadSpotifyEvo(ctx,url){
-  const response=await evoGet('/dl/spotify',{url},{timeoutMs:180000})
-  const d=response.data||{}
-  if(!d.url) throw new Error('La nueva API de Spotify no entregó el audio.')
-  const safeName=`${d.artist||'Spotify'} - ${d.name||'Canción'}`.replace(/[\/:*?"<>|]+/g,'_')
-  await sendRemoteMedia(ctx.sock,ctx.chat,{
-    type:'audio',url:d.url,download_url:d.url,mime_type:'audio/mpeg',filename:`${safeName}.mp3`
-  },{quoted:ctx.msg,caption:`🎵 *${d.name||'Spotify'}*\n👤 ${d.artist||'No disponible'}\n💿 ${d.album||'No disponible'}\n⏱️ ${d.duration||'No disponible'}\n📅 ${d.year||'No disponible'}`})
+      if (isLikelyUrl(input)) {
+        return runDownloadJob(
+          ctx,
+          'light',
+          '.spotify',
+          () => downloadSpotifyEvo(ctx, input)
+        )
+      }
+
+      const data = await evoGet('/search/spotify', { query: input })
+      const list = data.result || []
+      if (!list.length) throw new Error('No encontré canciones en Spotify.')
+
+      const token = saveSelection('spotify-evo', list)
+      const prefix = activePrefix(ctx)
+      const rows = list.slice(0, 10).map((r, i) => ({
+        header: 'Audio',
+        title: `${r.artist || 'Artista'} — ${r.title || 'Canción'}`.slice(0, 90),
+        description: [r.album, r.duration].filter(Boolean).join(' • ').slice(0, 100) || 'Descargar canción',
+        id: `${prefix}spotifypick ${token} ${i}`
+      }))
+
+      await sendInteractive(
+        ctx.sock,
+        ctx.chat,
+        {
+          title: 'Spotify Downloader',
+          body: `Resultados: *${input}*\nSelecciona una canción.`,
+          media: list[0]?.image
+            ? { image: { url: list[0].image } }
+            : null,
+          buttons: [
+            singleSelect('Seleccionar', [{ title: 'Canciones', rows }])
+          ]
+        },
+        ctx.msg
+      )
+    })
+  }
 }
 
-export const spotifypick={name:'spotifypick',aliases:[],async execute(ctx){return apiTask(ctx,async()=>{
-  const list=getSelection(ctx.args[0],'spotify-evo'); const item=list?.[Number(ctx.args[1])]; if(!item) throw new Error('La selección venció. Ejecuta .spotify nuevamente.')
-  if(!item.link) throw new Error('El resultado elegido no contiene un enlace de Spotify.')
-  await runDownloadJob(ctx,'light','.spotify',()=>downloadSpotifyEvo(ctx,item.link))
-})}}
+async function downloadSpotifyEvo(ctx, url, meta = {}) {
+  const response = await evoGet(
+    '/dl/spotify',
+    { url },
+    { timeoutMs: 180000 }
+  )
 
-export const ytmusic={name:'ytmusic',aliases:['ytm'],async execute(ctx){return apiTask(ctx,async()=>{
-  const input=queryText(ctx.args); if(!input) throw new Error(usage('ytmusic','<nombre o enlace>'))
-  if(isLikelyUrl(input)) return runDownloadJob(ctx,'light','.ytmusic',()=>directMedia(ctx,'/ytmusic/download',{mode:'link',url:input},d=>`🎵 *${d.title||'YouTube Music'}*\n📦 ${d.size_mb?`${d.size_mb} MB`:d.format||'M4A'}`))
-  const data=await apiGet('/ytmusic/search',{q:input,limit:10}); const list=data.results||[]; if(!list.length) throw new Error('No encontré canciones en YouTube Music.')
-  const token=saveSelection('ytmusic',list); const rows=list.map((r,i)=>({header:'Audio',title:`${r.artist||'Artista'} — ${r.title}`.slice(0,90),description:`${r.album||''} ${r.duration?`• ${r.duration}`:''}`.trim(),id:`${config.prefix}ytmusicpick ${token} ${i}`}))
-  await sendInteractive(ctx.sock,ctx.chat,{title:'YouTube Music',body:`Resultados: *${input}*\nSelecciona una canción.`,media:list[0]?.thumbnail?{image:{url:list[0].thumbnail}}:null,buttons:[singleSelect('Seleccionar',[{title:'Canciones',rows}])]},ctx.msg)
-})}}
-export const ytmusicpick={name:'ytmusicpick',aliases:[],async execute(ctx){return apiTask(ctx,async()=>{
-  const list=getSelection(ctx.args[0],'ytmusic'); const item=list?.[Number(ctx.args[1])]; if(!item) throw new Error('La selección venció. Ejecuta .ytmusic nuevamente.')
-  await runDownloadJob(ctx,'light','.ytmusic',()=>directMedia(ctx,'/ytmusic/download',{mode:'link',url:item.music_url||musicUrl(item.video_id)},d=>`🎵 *${d.title||item.title}*\n👤 ${item.artist||''}\n💿 ${item.album||''}`))
-})}}
+  const d = response.data || response.result || response || {}
+  const audioUrl = d.url || d.download_url || d.download
+  if (!audioUrl) {
+    throw new Error('La API de Spotify no entregó el audio.')
+  }
+
+  const title = d.name || d.title || meta.title || 'Spotify'
+  const artist = d.artist || meta.artist || 'Spotify'
+  const album = d.album || meta.album || 'Spotify'
+  const year = d.year || meta.year || ''
+  const coverUrl =
+    d.image ||
+    d.thumbnail ||
+    d.cover ||
+    d.cover_url ||
+    meta.image ||
+    meta.thumbnail ||
+    meta.cover ||
+    ''
+
+  const filename = `${artist} - ${title}.mp3`
+    .replace(/[\\/:*?"<>|]+/g, '_')
+
+  await sendTaggedOrFallback(ctx, {
+    audioUrl,
+    title,
+    artist,
+    album,
+    year,
+    coverUrl,
+    filename,
+    fallbackItem: {
+      type: 'audio',
+      url: audioUrl,
+      download_url: audioUrl,
+      mime_type: 'audio/mpeg',
+      filename
+    }
+  })
+}
+
+export const spotifypick = {
+  name: 'spotifypick',
+  aliases: [],
+  async execute(ctx) {
+    return apiTask(ctx, async () => {
+      const list = getSelection(ctx.args[0], 'spotify-evo')
+      const item = list?.[Number(ctx.args[1])]
+      if (!item) {
+        throw new Error('La selección venció. Ejecuta .spotify nuevamente.')
+      }
+      if (!item.link) {
+        throw new Error('El resultado elegido no contiene un enlace de Spotify.')
+      }
+
+      await runDownloadJob(
+        ctx,
+        'light',
+        '.spotify',
+        () => downloadSpotifyEvo(ctx, item.link, item)
+      )
+    })
+  }
+}
+
+export const ytmusic = {
+  name: 'ytmusic',
+  aliases: ['ytm'],
+  async execute(ctx) {
+    return apiTask(ctx, async () => {
+      const input = queryText(ctx.args)
+      if (!input) throw new Error(usage('ytmusic', '<nombre o enlace>'))
+
+      if (isLikelyUrl(input)) {
+        return runDownloadJob(
+          ctx,
+          'light',
+          '.ytmusic',
+          () => downloadYtMusicTagged(ctx, input)
+        )
+      }
+
+      const data = await apiGet('/ytmusic/search', {
+        q: input,
+        limit: 10
+      })
+      const list = data.results || []
+      if (!list.length) {
+        throw new Error('No encontré canciones en YouTube Music.')
+      }
+
+      const token = saveSelection('ytmusic', list)
+      const prefix = activePrefix(ctx)
+      const rows = list.map((r, i) => ({
+        header: 'Audio',
+        title: `${r.artist || 'Artista'} — ${r.title || 'Canción'}`.slice(0, 90),
+        description: [
+          r.album || '',
+          r.duration ? `• ${r.duration}` : ''
+        ].filter(Boolean).join(' ').trim(),
+        id: `${prefix}ytmusicpick ${token} ${i}`
+      }))
+
+      await sendInteractive(
+        ctx.sock,
+        ctx.chat,
+        {
+          title: 'YouTube Music',
+          body: `Resultados: *${input}*\nSelecciona una canción.`,
+          media: list[0]?.thumbnail
+            ? { image: { url: list[0].thumbnail } }
+            : null,
+          buttons: [
+            singleSelect('Seleccionar', [{ title: 'Canciones', rows }])
+          ]
+        },
+        ctx.msg
+      )
+    })
+  }
+}
+
+export const ytmusicpick = {
+  name: 'ytmusicpick',
+  aliases: [],
+  async execute(ctx) {
+    return apiTask(ctx, async () => {
+      const list = getSelection(ctx.args[0], 'ytmusic')
+      const item = list?.[Number(ctx.args[1])]
+      if (!item) {
+        throw new Error('La selección venció. Ejecuta .ytmusic nuevamente.')
+      }
+
+      const url = item.music_url || musicUrl(item.video_id)
+      if (!isLikelyUrl(url)) {
+        throw new Error('El resultado seleccionado no contiene un enlace válido.')
+      }
+
+      await runDownloadJob(
+        ctx,
+        'light',
+        '.ytmusic',
+        () => downloadYtMusicTagged(ctx, url, item)
+      )
+    })
+  }
+}
 
 async function downloadAppleMusic(ctx,url){
   await directMedia(ctx,'/applemusicdl',{url},d=>[
@@ -946,4 +1364,4 @@ export const queueStatus={name:'cola',aliases:['queue'],async execute(ctx){await
 export const cancelDownload={name:'cancelardescarga',aliases:['cancelardl'],async execute(ctx){const removed=cancelUserJobs(ctx.sender);await ctx.sock.sendMessage(ctx.chat,{text:removed?`✅ Se cancelaron ${removed} descarga(s) tuyas en espera.`:'No tienes descargas esperando en la cola.'},{quoted:ctx.msg})}}
 export const clearQueue={name:'limpiarcola',aliases:['clearqueue'],async execute(ctx){if(!ctx.isStaff)throw new Error('Este comando es solo para owner y subowner.');const removed=clearWaitingQueues();await ctx.sock.sendMessage(ctx.chat,{text:`✅ Cola limpiada. Solicitudes eliminadas: ${removed}.`},{quoted:ctx.msg})}}
 
-export const downloadCommands=[play,playpick,ytsearch,ytmp3,ytmp4,ytplaylist,yttranscript,spotify,spotifypick,ytmusic,ytmusicpick,applemusic,applemusicpick,apk,apkpick,apkmod,apkmodpick,facebook,instagram,twitch,reddit,bilibili,threads,universal,pinterest,pinterestSearch,stickerSearch,stickerPack,tiktok,tiktokSearch,tiktokGet,mediafire,mega,terabox,teraboxpick,anime,queueStatus,cancelDownload,clearQueue]
+export const downloadCommands=[play,playpick,ytsearch,ytmp3,ytaudiopick,ytmp4,ytplaylist,yttranscript,spotify,spotifypick,ytmusic,ytmusicpick,applemusic,applemusicpick,apk,apkpick,apkmod,apkmodpick,facebook,instagram,twitch,reddit,bilibili,threads,universal,pinterest,pinterestSearch,stickerSearch,stickerPack,tiktok,tiktokSearch,tiktokGet,mediafire,mega,terabox,teraboxpick,anime,queueStatus,cancelDownload,clearQueue]

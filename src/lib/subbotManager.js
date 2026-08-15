@@ -62,7 +62,9 @@ export async function startSubbotProcess({
   phone,
   requestChat,
   requester,
-  platform = 'Desconocido'
+  platform = 'Desconocido',
+  deliveryInstanceType = 'principal',
+  deliveryInstanceId = null
 }) {
   const sessionDir = path.resolve('sessions', 'subbots', id)
   const name = `nero-subbot-${id}`
@@ -78,6 +80,8 @@ export async function startSubbotProcess({
     requestChat,
     requester,
     platform,
+    deliveryInstanceType,
+    deliveryInstanceId,
     status: 'starting',
     startedAt: Date.now(),
     sessionDir

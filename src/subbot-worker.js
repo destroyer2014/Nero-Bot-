@@ -113,7 +113,10 @@ async function pausePairing(reason, statusCode = null) {
 
   const entry = getSubbot(id)
 
-  if (entry?.requestChat) {
+  if (
+    entry?.requestChat &&
+    entry?.deliveryInstanceType !== 'subbot'
+  ) {
     await emitSubbotEvent({
       type: 'pairing-paused',
       chat: entry.requestChat,
@@ -532,7 +535,10 @@ async function start() {
       })
 
       const entry = getSubbot(id)
-      if (entry?.requestChat) {
+      if (
+        entry?.requestChat &&
+        entry?.deliveryInstanceType !== 'subbot'
+      ) {
         await emitSubbotEvent({
           type: 'pairing-code',
           chat: entry.requestChat,

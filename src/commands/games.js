@@ -382,6 +382,227 @@ export const testGayCommand = {
   }
 }
 
+async function memeTarget(ctx) {
+  await groupMembers(ctx)
+  return mentions(ctx)[0] || ctx.sender
+}
+
+async function memePair(ctx) {
+  const members = await groupMembers(ctx)
+  const tagged = mentions(ctx)
+  let first
+  let second
+
+  if (tagged.length >= 2) {
+    ;[first, second] = tagged
+  } else if (tagged.length === 1) {
+    first = ctx.sender
+    second = tagged[0]
+  } else {
+    first = ctx.sender
+    second = choose(members.filter(jid => !sameIdentity(jid, first)))
+  }
+
+  if (!first || !second || sameIdentity(first, second)) {
+    throw new Error('Necesito dos personas distintas para este resultado.')
+  }
+
+  return [first, second]
+}
+
+function todayKey() {
+  return new Date().toISOString().slice(0, 10)
+}
+
+function singleMemeCommand({
+  name,
+  aliases = [],
+  title,
+  emoji,
+  salt,
+  low,
+  mid,
+  high,
+  note = '🎲 Resultado de entretenimiento; no afirma nada real sobre la persona.'
+}) {
+  return {
+    name,
+    aliases,
+    async execute(ctx) {
+      const target = await memeTarget(ctx)
+      const percent = stablePercent(target, todayKey(), salt)
+      const phrase = percent >= 75 ? high
+        : percent >= 40 ? mid
+        : low
+
+      await ctx.sock.sendMessage(ctx.chat, {
+        text: [
+          `${emoji} *${title} — modo meme*`,
+          '',
+          `${display(target)} → *${percent}%*`,
+          progress(percent),
+          '',
+          phrase,
+          '',
+          note
+        ].join('\n'),
+        mentions: [target]
+      }, { quoted: ctx.msg })
+    }
+  }
+}
+
+function pairMemeCommand({
+  name,
+  aliases = [],
+  title,
+  emoji,
+  salt,
+  low,
+  mid,
+  high,
+  note = '🎲 Resultado de entretenimiento.'
+}) {
+  return {
+    name,
+    aliases,
+    async execute(ctx) {
+      const [first, second] = await memePair(ctx)
+      const percent = stablePercent(first, second, salt)
+      const phrase = percent >= 75 ? high
+        : percent >= 40 ? mid
+        : low
+
+      await ctx.sock.sendMessage(ctx.chat, {
+        text: [
+          `${emoji} *${title}*`,
+          '',
+          `${display(first)} + ${display(second)}`,
+          `${progress(percent)} *${percent}%*`,
+          '',
+          phrase,
+          '',
+          note
+        ].join('\n'),
+        mentions: [first, second]
+      }, { quoted: ctx.msg })
+    }
+  }
+}
+
+export const infielCommand = singleMemeCommand({
+  name: 'infiel',
+  aliases: ['infidelidad'],
+  title: 'Detector de infidelidad',
+  emoji: '💔',
+  salt: 'nero-infiel',
+  low: '😇 El detector está tranquilito.',
+  mid: '👀 Nero detecta sospechas de novela.',
+  high: '🚨 El detector se volvió loco.',
+  note: '🎲 Es un meme; no determina ni acusa infidelidad real.'
+})
+
+export const therianCommand = singleMemeCommand({
+  name: 'therian',
+  aliases: ['testtherian'],
+  title: 'Therianómetro',
+  emoji: '🐾',
+  salt: 'nero-therian',
+  low: '🌿 Hoy el bosque está silencioso.',
+  mid: '🐾 Hay energía salvaje por aquí.',
+  high: '🌕 Nero escuchó aullar al algoritmo.',
+  note: '🎲 Es solo entretenimiento; no determina si una persona es Therian.'
+})
+
+export const amistadCommand = pairMemeCommand({
+  name: 'amistad',
+  aliases: ['friendship', 'amigos'],
+  title: 'Compatibilidad de amistad',
+  emoji: '🤝',
+  salt: 'nero-amistad',
+  low: '😅 Todavía falta desbloquear confianza.',
+  mid: '🙌 Buena amistad en construcción.',
+  high: '🫂 Dúo inseparable según Nero.'
+})
+
+export const toxicoCommand = singleMemeCommand({
+  name: 'toxico',
+  aliases: ['toxica', 'toxicometro'],
+  title: 'Toxicómetro',
+  emoji: '☣️',
+  salt: 'nero-toxico',
+  low: '🌱 Bastante relax por hoy.',
+  mid: '⚠️ Un poquito de drama.',
+  high: '☢️ Nivel telenovela desbloqueado.'
+})
+
+export const celosoCommand = singleMemeCommand({
+  name: 'celoso',
+  aliases: ['celosa', 'celos'],
+  title: 'Celosómetro',
+  emoji: '😒',
+  salt: 'nero-celoso',
+  low: '😌 Cero preocupaciones.',
+  mid: '👁️ Una miradita sospechosa.',
+  high: '🛰️ Modo radar activado.'
+})
+
+export const crushCommand = pairMemeCommand({
+  name: 'crush',
+  aliases: ['match'],
+  title: 'Crush Match',
+  emoji: '💘',
+  salt: 'nero-crush',
+  low: '🧊 El algoritmo pide paciencia.',
+  mid: '💕 Puede haber química.',
+  high: '🔥 Nero ve chispas.'
+})
+
+export const intensoCommand = singleMemeCommand({
+  name: 'intenso',
+  aliases: ['intensa'],
+  title: 'Intensómetro',
+  emoji: '🔥',
+  salt: 'nero-intenso',
+  low: '🧊 Modo chill.',
+  mid: '🌶️ Picante moderado.',
+  high: '🌋 Intensidad máxima.'
+})
+
+export const maldadCommand = singleMemeCommand({
+  name: 'maldad',
+  aliases: ['malvado', 'malvada'],
+  title: 'Medidor de maldad',
+  emoji: '😈',
+  salt: 'nero-maldad',
+  low: '😇 Casi un angelito.',
+  mid: '😏 Tiene sus momentos.',
+  high: '👹 Villano final según el meme.'
+})
+
+export const inocenteCommand = singleMemeCommand({
+  name: 'inocente',
+  aliases: ['inocencia'],
+  title: 'Medidor de inocencia',
+  emoji: '😇',
+  salt: 'nero-inocente',
+  low: '😏 Nero tiene dudas.',
+  mid: '🙂 Mitad santo, mitad caos.',
+  high: '✨ Certificado de angelito meme.'
+})
+
+export const suerteCommand = singleMemeCommand({
+  name: 'suerte',
+  aliases: ['luck'],
+  title: 'Suerte del día',
+  emoji: '🍀',
+  salt: 'nero-suerte',
+  low: '🧿 Hoy mejor evita tentar al destino.',
+  mid: '🎲 Día equilibrado.',
+  high: '🌟 Hoy el RNG está de tu lado.',
+  note: '🎲 Resultado de entretenimiento; cambia con el día.'
+})
+
 export const pptCommand = {
   name: 'ppt',
   aliases: ['piedrapapeltijera', 'rps'],
@@ -428,6 +649,16 @@ export const gameCommands = [
   movieCommand,
   parejaCommand,
   testGayCommand,
+  infielCommand,
+  therianCommand,
+  amistadCommand,
+  toxicoCommand,
+  celosoCommand,
+  crushCommand,
+  intensoCommand,
+  maldadCommand,
+  inocenteCommand,
+  suerteCommand,
   pptCommand,
   dadoCommand,
   monedaCommand
