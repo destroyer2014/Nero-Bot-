@@ -43,6 +43,58 @@ async function fetchImageBuffer(url, timeoutMs = 20000) {
   }
 }
 
+async function sendMusicDocumentCard(ctx, {
+  audioUrl,
+  title = 'Canción',
+  artist = 'Artista',
+  album = '',
+  coverUrl = '',
+  filename = '',
+  mimetype = 'audio/mpeg'
+}) {
+  if (!audioUrl) {
+    throw new Error('No hay un enlace de audio disponible.')
+  }
+
+  let jpegThumbnail
+
+  if (coverUrl) {
+    try {
+      jpegThumbnail = await fetchImageBuffer(coverUrl, 30000)
+    } catch (error) {
+      console.warn(
+        '[MUSIC CARD] No pude preparar la portada:',
+        error?.message || error
+      )
+    }
+  }
+
+  const extension = mimetype === 'audio/mp4' ? 'm4a' : 'mp3'
+  const safeName = String(
+    filename || `${artist} - ${title}.${extension}`
+  )
+    .replace(/[\\/:*?"<>|]+/g, '_')
+    .slice(0, 150)
+
+  const message = {
+    document: { url: audioUrl },
+    mimetype,
+    fileName: safeName
+  }
+
+  // En los documentos de WhatsApp este thumbnail ocupa el cuadro
+  // que normalmente aparece gris cuando el archivo no tiene portada.
+  if (jpegThumbnail) {
+    message.jpegThumbnail = jpegThumbnail
+  }
+
+  await ctx.sock.sendMessage(
+    ctx.chat,
+    message,
+    { quoted: ctx.msg }
+  )
+}
+
 let fallbackTikTokCover
 async function getFallbackTikTokCover() {
   if (!fallbackTikTokCover) {
@@ -269,7 +321,12 @@ async function downloadYtMusicTagged(ctx, url, meta = {}) {
     throw new Error('YouTube Music no entregó un enlace de audio.')
   }
 
-  const title = meta.title || data.title || item.title || 'YouTube Music'
+  const title =
+    meta.title ||
+    data.title ||
+    item.title ||
+    'YouTube Music'
+
   const artist =
     meta.artist ||
     meta.author ||
@@ -278,28 +335,51 @@ async function downloadYtMusicTagged(ctx, url, meta = {}) {
     item.artist ||
     item.author ||
     'YouTube Music'
-  const album = meta.album || data.album || item.album || 'YouTube Music'
+
+  const album =
+    meta.album ||
+    data.album ||
+    item.album ||
+    ''
+
   const coverUrl =
     meta.thumbnail ||
     meta.image ||
+    meta.cover ||
     data.thumbnail ||
     data.image ||
+    data.cover ||
     item.thumbnail ||
     item.image ||
+    item.cover ||
     ''
-  const year = meta.year || data.year || item.year || ''
-  const filename = `${artist} - ${title}.mp3`
+
+  const rawFormat = String(
+    data.format ||
+    item.format ||
+    item.ext ||
+    'm4a'
+  ).toLowerCase()
+
+  const isMp3 =
+    rawFormat.includes('mp3') ||
+    String(item.mime_type || item.content_type || '')
+      .toLowerCase()
+      .includes('mpeg')
+
+  const mimetype = isMp3 ? 'audio/mpeg' : 'audio/mp4'
+  const extension = isMp3 ? 'mp3' : 'm4a'
+  const filename = `${artist} - ${title}.${extension}`
     .replace(/[\\/:*?"<>|]+/g, '_')
 
-  await sendTaggedOrFallback(ctx, {
+  await sendMusicDocumentCard(ctx, {
     audioUrl,
     title,
     artist,
     album,
-    year,
     coverUrl,
     filename,
-    fallbackItem: item
+    mimetype
   })
 }
 
@@ -676,14 +756,27 @@ async function downloadSpotifyEvo(ctx, url, meta = {}) {
 
   const d = response.data || response.result || response || {}
   const audioUrl = d.url || d.download_url || d.download
+
   if (!audioUrl) {
     throw new Error('La API de Spotify no entregó el audio.')
   }
 
-  const title = d.name || d.title || meta.title || 'Spotify'
-  const artist = d.artist || meta.artist || 'Spotify'
-  const album = d.album || meta.album || 'Spotify'
-  const year = d.year || meta.year || ''
+  const title =
+    d.name ||
+    d.title ||
+    meta.title ||
+    'Spotify'
+
+  const artist =
+    d.artist ||
+    meta.artist ||
+    'Spotify'
+
+  const album =
+    d.album ||
+    meta.album ||
+    ''
+
   const coverUrl =
     d.image ||
     d.thumbnail ||
@@ -697,21 +790,14 @@ async function downloadSpotifyEvo(ctx, url, meta = {}) {
   const filename = `${artist} - ${title}.mp3`
     .replace(/[\\/:*?"<>|]+/g, '_')
 
-  await sendTaggedOrFallback(ctx, {
+  await sendMusicDocumentCard(ctx, {
     audioUrl,
     title,
     artist,
     album,
-    year,
     coverUrl,
     filename,
-    fallbackItem: {
-      type: 'audio',
-      url: audioUrl,
-      download_url: audioUrl,
-      mime_type: 'audio/mpeg',
-      filename
-    }
+    mimetype: 'audio/mpeg'
   })
 }
 
