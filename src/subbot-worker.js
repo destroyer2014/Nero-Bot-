@@ -14,7 +14,8 @@ import makeWASocket, {
 } from '@itsliaaa/baileys'
 import config from '../config.js'
 import { extractText } from './lib/text.js'
-import { findCommand } from './commands/index.js'
+import { findCommand, suggestCommand } from './commands/index.js'
+import { unknownCommandMessage } from './lib/unknownCommand.js'
 import { startGachaScheduler } from './commands/gacha.js'
 import {
   getPermissionLevel,
@@ -664,7 +665,33 @@ async function start() {
           .split(/\s+/)
 
         const command = findCommand(raw)
-        if (!command) continue
+        if (!command) {
+          if (chat.endsWith('@g.us')) {
+            const routing = await shouldHandleGroup({
+              sock,
+              groupId: chat,
+              instanceType: 'subbot',
+              instanceId: id,
+              commandName: '__unknown__'
+            })
+
+            if (!routing.handle) continue
+          }
+
+          await sock.sendMessage(
+            chat,
+            {
+              text: unknownCommandMessage(
+                raw,
+                runtimeConfig.prefix,
+                suggestCommand(raw)
+              )
+            },
+            { quoted: msg }
+          ).catch(() => {})
+
+          continue
+        }
         if (runtimeConfig.disabledCommands.includes(String(command.name || raw).toLowerCase())) continue
 
         const privateChat = !chat.endsWith('@g.us')

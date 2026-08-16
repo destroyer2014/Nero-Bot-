@@ -13,7 +13,8 @@ import makeWASocket, {
 } from '@itsliaaa/baileys'
 import config from '../config.js'
 import { extractText } from './lib/text.js'
-import { findCommand } from './commands/index.js'
+import { findCommand, suggestCommand } from './commands/index.js'
+import { unknownCommandMessage } from './lib/unknownCommand.js'
 import { startGachaScheduler } from './commands/gacha.js'
 import { getPermissionLevel, isOwner, isStaff, isSubOwner } from './lib/permissions.js'
 import { moderateIncoming } from './lib/nsfwGuard.js'
@@ -531,7 +532,38 @@ async function startNeroBot() {
         if (!rawCommand) continue
 
         const command = findCommand(rawCommand)
-        if (!command) continue
+        if (!command) {
+          if (chat.endsWith('@g.us')) {
+            rememberPrincipalGroup(
+              chat,
+              sock.user?.id || sock.user?.jid || ''
+            )
+
+            const routing = await shouldHandleGroup({
+              sock,
+              groupId: chat,
+              instanceType: 'principal',
+              instanceId: 'principal',
+              commandName: '__unknown__'
+            })
+
+            if (!routing.handle) continue
+          }
+
+          await sock.sendMessage(
+            chat,
+            {
+              text: unknownCommandMessage(
+                rawCommand,
+                config.prefix,
+                suggestCommand(rawCommand)
+              )
+            },
+            { quoted: msg }
+          ).catch(() => {})
+
+          continue
+        }
 
         const isPrivateChat = !chat.endsWith('@g.us')
         const instanceMode = getInstanceMode('principal', '')

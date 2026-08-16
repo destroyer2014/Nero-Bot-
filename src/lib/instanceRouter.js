@@ -7,6 +7,7 @@ import { isInstanceAlive } from './instanceHeartbeat.js'
 const principalFile = path.resolve('runtime', 'principal-instance.json')
 
 const CONTROL_COMMANDS = new Set([
+  '__unknown__',
   'setprincipal',
   'setbot',
   'principalpick',

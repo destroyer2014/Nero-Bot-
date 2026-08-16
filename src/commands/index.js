@@ -72,5 +72,66 @@ for (const command of commands) {
 }
 
 export function findCommand(name) {
-  return commandMap.get(name.toLowerCase())
+  return commandMap.get(String(name || '').toLowerCase())
+}
+
+const SUGGESTION_OVERRIDES = {
+  spotifypick: 'spotifydl',
+  spotifydown: 'spotifydl',
+  spotifydownload: 'spotifydl',
+  ytmusicpick: 'ytmusic',
+  ytaudiopick: 'play',
+  animepick: 'anime',
+  animequery: 'anime',
+  peliculapick: 'pelicula'
+}
+
+function levenshtein(a = '', b = '') {
+  const x = String(a)
+  const y = String(b)
+  const row = Array.from({ length: y.length + 1 }, (_, i) => i)
+
+  for (let i = 1; i <= x.length; i += 1) {
+    let previous = row[0]
+    row[0] = i
+
+    for (let j = 1; j <= y.length; j += 1) {
+      const current = row[j]
+      row[j] = Math.min(
+        row[j] + 1,
+        row[j - 1] + 1,
+        previous + (x[i - 1] === y[j - 1] ? 0 : 1)
+      )
+      previous = current
+    }
+  }
+
+  return row[y.length]
+}
+
+export function suggestCommand(name) {
+  const raw = String(name || '').toLowerCase().trim()
+  if (!raw) return ''
+
+  if (SUGGESTION_OVERRIDES[raw]) {
+    return SUGGESTION_OVERRIDES[raw]
+  }
+
+  const internal = /(?:pick|query|get|episode)$/i
+  const candidates = [...new Set(commandMap.keys())]
+    .filter(candidate => !internal.test(candidate))
+
+  let best = ''
+  let bestDistance = Infinity
+
+  for (const candidate of candidates) {
+    const distance = levenshtein(raw, candidate)
+    if (distance < bestDistance) {
+      best = candidate
+      bestDistance = distance
+    }
+  }
+
+  const threshold = Math.max(2, Math.ceil(raw.length * 0.35))
+  return bestDistance <= threshold ? best : ''
 }

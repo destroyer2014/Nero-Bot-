@@ -1,4 +1,5 @@
 import config from '../../config.js'
+import { prepareWAMessageMedia } from '@itsliaaa/baileys'
 import { apiGet, evoGet, ApiError } from '../lib/api.js'
 import { sendInteractive, copyButton, quickReply, singleSelect, urlButton } from '../lib/interactive.js'
 import { enviarCarrusel } from '../lib/uiBuilder.js'
@@ -60,7 +61,30 @@ async function sendMusicDocumentCard(ctx, {
 
   if (coverUrl) {
     try {
-      jpegThumbnail = await fetchImageBuffer(coverUrl, 30000)
+      const sourceCover = await fetchImageBuffer(coverUrl, 30000)
+
+      // WhatsApp ignora con frecuencia thumbnails de documentos demasiado
+      // grandes. Generamos uno cuadrado pequeño y mantenemos el JPEG debajo
+      // de ~64 KB para máxima compatibilidad con Android/iOS.
+      let quality = 72
+      let size = 320
+
+      for (let attempt = 0; attempt < 4; attempt += 1) {
+        jpegThumbnail = await sharp(sourceCover)
+          .resize(size, size, { fit: 'cover' })
+          .jpeg({ quality })
+          .toBuffer()
+
+        if (jpegThumbnail.length <= 64 * 1024) break
+        quality -= 12
+        size = Math.max(180, size - 40)
+      }
+
+      console.log(
+        '[MUSIC CARD] thumbnail:',
+        `${jpegThumbnail.length} bytes`,
+        title
+      )
     } catch (error) {
       console.warn(
         '[MUSIC CARD] No pude preparar la portada:',
@@ -76,21 +100,35 @@ async function sendMusicDocumentCard(ctx, {
     .replace(/[\\/:*?"<>|]+/g, '_')
     .slice(0, 150)
 
-  const message = {
-    document: { url: audioUrl },
-    mimetype,
-    fileName: safeName
+  const prepared = await prepareWAMessageMedia(
+    {
+      document: { url: audioUrl },
+      mimetype,
+      fileName: safeName
+    },
+    {
+      upload: ctx.sock.waUploadToServer
+    }
+  )
+
+  const documentMessage = prepared?.documentMessage
+  if (!documentMessage) {
+    throw new Error('WhatsApp no pudo preparar la tarjeta del archivo.')
   }
 
-  // En los documentos de WhatsApp este thumbnail ocupa el cuadro
-  // que normalmente aparece gris cuando el archivo no tiene portada.
+  documentMessage.fileName = safeName
+  documentMessage.mimetype = mimetype
+
   if (jpegThumbnail) {
-    message.jpegThumbnail = jpegThumbnail
+    documentMessage.jpegThumbnail = jpegThumbnail
   }
 
   await ctx.sock.sendMessage(
     ctx.chat,
-    message,
+    {
+      documentMessage,
+      raw: true
+    },
     { quoted: ctx.msg }
   )
 }
@@ -700,7 +738,7 @@ export const yttranscript = {
 
 export const spotify = {
   name: 'spotify',
-  aliases: ['sp'],
+  aliases: ['sp', 'spotifydl'],
   async execute(ctx) {
     return apiTask(ctx, async () => {
       const input = queryText(ctx.args)

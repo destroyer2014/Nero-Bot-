@@ -1,7 +1,7 @@
 {
   "name": "nero-bot",
-  "version": "1.18.3",
-  "description": "Nero Bot v1.18.3: Spotify y YouTube Music con tarjeta de archivo y portada",
+  "version": "1.18.4",
+  "description": "Nero Bot v1.18.4: portada real en archivos de música y comandos desconocidos",
   "type": "module",
   "main": "src/index.js",
   "scripts": {
