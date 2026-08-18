@@ -124,6 +124,20 @@ export function suggestCommand(name) {
     return SUGGESTION_OVERRIDES[raw]
   }
 
+  const prefixSuggestions = [
+    [/^spo/i, 'spotify'],
+    [/^ytm/i, 'ytmusic'],
+    [/^yts/i, 'ytsearch'],
+    [/^ani/i, 'anime'],
+    [/^peli/i, 'pelicula'],
+    [/^tiktok/i, 'tiktok'],
+    [/^insta/i, 'instagram']
+  ]
+
+  for (const [pattern, suggestion] of prefixSuggestions) {
+    if (pattern.test(raw)) return suggestion
+  }
+
   const internal = /(?:pick|query|get|episode)$/i
   const entries = []
 

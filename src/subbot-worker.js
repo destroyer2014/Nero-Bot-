@@ -39,6 +39,10 @@ import { shouldHandleGroup } from './lib/instanceRouter.js'
 import { recordCommandError, commandErrorMessage } from './lib/commandErrors.js'
 import { handleAdminParticipantUpdate } from './lib/adminEvents.js'
 import { checkCommandRate, rateLimitMessage } from './lib/commandGuard.js'
+import { waitCommandResponseDelay } from './lib/commandDelay.js'
+import { initializeTempStorage } from './lib/diskGuard.js'
+import { bindSafeCreds } from './lib/authStorage.js'
+import { logConnectionEvent } from './lib/runtimeLog.js'
 import { createInstanceHeartbeat } from './lib/instanceHeartbeat.js'
 
 const args = process.argv.slice(2)
@@ -54,6 +58,11 @@ const pairingRequestId = arg('--pairing-request-id') || ''
 if (!id || !phone) throw new Error('Faltan --id y --phone')
 
 const instanceHeartbeat = createInstanceHeartbeat('subbot', id)
+
+await initializeTempStorage()
+  .catch(error =>
+    console.warn('[TEMP SUBBOT]', error?.message || error)
+  )
 let reconnectAttempts = 0
 let connectedNoticeSent = false
 
@@ -510,7 +519,10 @@ async function start() {
   })
 
   sockRef = sock
-  sock.ev.on('creds.update', saveCreds)
+  bindSafeCreds(sock, saveCreds, {
+    instanceType: 'subbot',
+    instanceId: id
+  })
   startGachaScheduler(sock)
 
   sock.ev.on('groups.update', () => {
@@ -521,6 +533,17 @@ async function start() {
     const statusCode = new Boom(
       update.lastDisconnect?.error
     )?.output?.statusCode
+
+    if (update.connection === 'open' || update.connection === 'close') {
+      await logConnectionEvent({
+        instanceType: 'subbot',
+        instanceId: id,
+        phone,
+        event: update.connection,
+        statusCode: statusCode || null,
+        error: update.lastDisconnect?.error || null
+      })
+    }
 
     if (update.connection === 'open') {
       reconnectAttempts = 0
@@ -748,6 +771,9 @@ async function start() {
           .slice(runtimeConfig.prefix.length)
           .trim()
           .split(/\s+/)
+
+        if (!raw) continue
+        await waitCommandResponseDelay()
 
         const command = findCommand(raw)
         if (!command) {

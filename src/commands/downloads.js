@@ -9,6 +9,10 @@ import { getSelection, saveSelection } from '../lib/selectionCache.js'
 import { sendLargeVideoAsDocuments } from '../lib/largeMedia.js'
 import { createTaggedAudio, sendTaggedAudio } from '../lib/audioTags.js'
 import { recordCommandError, commandErrorMessage } from '../lib/commandErrors.js'
+import {
+  isDiskSpaceError,
+  recoverDiskSpace
+} from '../lib/diskGuard.js'
 import sharp from 'sharp'
 import Webpmux from 'node-webpmux'
 import fs from 'node:fs/promises'
@@ -166,6 +170,9 @@ async function apiTask(ctx, fn) {
   try { await fn() ; await react(ctx.sock, ctx.msg, '✅') }
   catch (error) {
     console.error('Error en descarga:', error)
+    if (isDiskSpaceError(error)) {
+      await recoverDiskSpace().catch(() => {})
+    }
     const code = recordCommandError({
       sender: ctx.sender,
       chat: ctx.chat,
@@ -343,30 +350,71 @@ async function downloadYoutubeAudioTagged(ctx, url, meta = {}) {
 }
 
 async function downloadYtMusicTagged(ctx, url, meta = {}) {
-  const data = await apiGet(
-    '/ytmusic/download',
-    { mode: 'link', url },
-    { timeoutMs: 180000 }
-  )
+  let data
+  let firstError = null
 
-  const nested =
-    data.selected ||
-    data.result ||
-    data.primary_media ||
-    data.results?.[0] ||
-    {}
-
-  const item = {
-    ...data,
-    ...nested,
-    selected: data.selected,
-    result: data.result,
-    results: data.results
+  try {
+    data = await apiGet(
+      '/ytmusic/download',
+      { mode: 'link', url },
+      { timeoutMs: 180000 }
+    )
+  } catch (error) {
+    firstError = error
   }
 
-  const audioUrl = pickDownloadUrl(item)
+  let nested =
+    data?.selected ||
+    data?.result ||
+    data?.primary_media ||
+    data?.results?.[0] ||
+    {}
+
+  let item = {
+    ...(data || {}),
+    ...nested,
+    selected: data?.selected,
+    result: data?.result,
+    results: data?.results
+  }
+
+  let audioUrl = pickDownloadUrl(item)
+
   if (!audioUrl) {
-    throw new Error('YouTube Music no entregó un enlace de audio.')
+    try {
+      data = await apiGet(
+        '/ytmusic',
+        { mode: 'link', url },
+        { timeoutMs: 180000 }
+      )
+
+      nested =
+        data.selected ||
+        data.result ||
+        data.primary_media ||
+        data.results?.[0] ||
+        {}
+
+      item = {
+        ...data,
+        ...nested,
+        selected: data.selected,
+        result: data.result,
+        results: data.results
+      }
+
+      audioUrl = pickDownloadUrl(item)
+    } catch (fallbackError) {
+      if (firstError) throw firstError
+      throw fallbackError
+    }
+  }
+
+  if (!audioUrl) {
+    throw firstError ||
+      new Error(
+        'YouTube Music no entregó un enlace de audio.'
+      )
   }
 
   const title =
@@ -417,8 +465,9 @@ async function downloadYtMusicTagged(ctx, url, meta = {}) {
 
   const mimetype = isMp3 ? 'audio/mpeg' : 'audio/mp4'
   const extension = isMp3 ? 'mp3' : 'm4a'
-  const filename = `${artist} - ${title}.${extension}`
-    .replace(/[\\/:*?"<>|]+/g, '_')
+  const filename =
+    `${artist} - ${title}.${extension}`
+      .replace(/[\\/:*?"<>|]+/g, '_')
 
   await sendMusicDocumentCard(ctx, {
     audioUrl,
@@ -626,6 +675,68 @@ export const ytmp4={name:'ytmp4',aliases:['ytvideo'],async execute(ctx){return a
   await runDownloadJob(ctx,'heavy','.ytmp4',()=>downloadYoutubeVideo(ctx,url,quality))
 })}}
 
+function canonicalYoutubePlaylistUrl(value) {
+  try {
+    const input = new URL(value)
+    const list = input.searchParams.get('list')
+    if (!list) return value
+
+    const canonical = new URL(
+      'https://www.youtube.com/playlist'
+    )
+    canonical.searchParams.set('list', list)
+    return canonical.toString()
+  } catch {
+    return value
+  }
+}
+
+async function prepareYoutubePlaylist(url, limit) {
+  const cleanUrl = canonicalYoutubePlaylistUrl(url)
+  let lastError
+
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    try {
+      return await apiGet(
+        '/youtube/playlist',
+        { url: cleanUrl, limit },
+        { timeoutMs: 180000 }
+      )
+    } catch (error) {
+      lastError = error
+      const status = Number(error?.status || 0)
+
+      if (
+        ![429, 500, 502, 503, 504].includes(status) ||
+        attempt >= 3
+      ) {
+        break
+      }
+
+      await new Promise(resolve =>
+        setTimeout(resolve, 1500 * attempt * attempt)
+      )
+    }
+  }
+
+  const listId = (() => {
+    try {
+      return new URL(cleanUrl).searchParams.get('list') || ''
+    } catch {
+      return ''
+    }
+  })()
+
+  if (/^RD/i.test(listId)) {
+    throw new Error(
+      'Ese enlace parece ser un Mix automático de YouTube y el proveedor no pudo abrirlo como playlist. Prueba con una playlist normal.'
+    )
+  }
+
+  throw lastError ||
+    new Error('No pude abrir esa playlist de YouTube.')
+}
+
 export const ytplaylist = {
   name: 'ytplaylist',
   aliases: ['playlistyt','ytpl'],
@@ -637,7 +748,7 @@ export const ytplaylist = {
       const requested = Number(ctx.args[1] || config.searchLimit || 5)
       const limit = Math.min(10, Math.max(1, Number.isFinite(requested) ? requested : 5))
 
-      const data = await apiGet('/youtube/playlist', { url, limit }, { timeoutMs: 180000 })
+      const data = await prepareYoutubePlaylist(url, limit)
       const tracks = (data.tracks || []).slice(0, limit)
       if (!tracks.length) throw new Error('No encontré videos disponibles en esa playlist.')
 
@@ -796,17 +907,61 @@ export const spotify = {
 }
 
 async function downloadSpotifyEvo(ctx, url, meta = {}) {
-  const response = await evoGet(
-    '/dl/spotify',
-    { url },
-    { timeoutMs: 180000 }
-  )
+  let d = null
+  let primaryError = null
 
-  const d = response.data || response.result || response || {}
-  const audioUrl = d.url || d.download_url || d.download
+  try {
+    const response = await evoGet(
+      '/dl/spotify',
+      { url },
+      { timeoutMs: 180000 }
+    )
+
+    d =
+      response.data ||
+      response.result ||
+      response ||
+      {}
+  } catch (error) {
+    primaryError = error
+    console.warn(
+      '[SPOTIFY] EvoGB:',
+      error?.message || error
+    )
+  }
+
+  let audioUrl = pickDownloadUrl(d || {})
 
   if (!audioUrl) {
-    throw new Error('La API de Spotify no entregó el audio.')
+    try {
+      const fallback = await apiGet(
+        '/spotify',
+        { mode: 'link', url },
+        { timeoutMs: 180000 }
+      )
+
+      d = {
+        ...(d || {}),
+        ...fallback,
+        ...(fallback.result || {}),
+        ...(fallback.selected || {})
+      }
+
+      audioUrl = pickDownloadUrl(d)
+    } catch (fallbackError) {
+      console.warn(
+        '[SPOTIFY] DVYer fallback:',
+        fallbackError?.message || fallbackError
+      )
+
+      if (primaryError) throw primaryError
+      throw fallbackError
+    }
+  }
+
+  if (!audioUrl) {
+    throw primaryError ||
+      new Error('La API de Spotify no entregó el audio.')
   }
 
   const title =
@@ -817,11 +972,13 @@ async function downloadSpotifyEvo(ctx, url, meta = {}) {
 
   const artist =
     d.artist ||
+    d.artist_name ||
     meta.artist ||
     'Spotify'
 
   const album =
     d.album ||
+    d.album_name ||
     meta.album ||
     ''
 
@@ -835,8 +992,9 @@ async function downloadSpotifyEvo(ctx, url, meta = {}) {
     meta.cover ||
     ''
 
-  const filename = `${artist} - ${title}.mp3`
-    .replace(/[\\/:*?"<>|]+/g, '_')
+  const filename =
+    `${artist} - ${title}.mp3`
+      .replace(/[\\/:*?"<>|]+/g, '_')
 
   await sendMusicDocumentCard(ctx, {
     audioUrl,
@@ -956,15 +1114,106 @@ export const ytmusicpick = {
   }
 }
 
-async function downloadAppleMusic(ctx,url){
-  await directMedia(ctx,'/applemusicdl',{url},d=>[
-    `🍎 *${d.track_name||d.title||'Apple Music'}*`,
-    `👤 ${d.artist_name||'No disponible'}`,
-    d.album_name?`💿 ${d.album_name}`:'',
-    d.genre?`🎼 ${d.genre}`:'',
-    d.duration_seconds?`⏱️ ${formatDuration(d.duration_seconds)}`:'',
-    `🎧 ${d.quality||'128K'} • ${d.format||'MP3'}`
-  ].filter(Boolean).join('\n'),{prepareAttempts:3})
+async function downloadAppleMusic(ctx, url, meta = {}) {
+  let data
+  let lastError
+
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    try {
+      data = await apiGet(
+        '/applemusicdl',
+        { url },
+        { timeoutMs: 180000 }
+      )
+
+      if (pickDownloadUrl(data)) break
+      lastError = new Error(
+        'Apple Music todavía no entregó el audio.'
+      )
+    } catch (error) {
+      lastError = error
+    }
+
+    if (attempt < 3) {
+      await new Promise(resolve =>
+        setTimeout(resolve, 1600 * attempt)
+      )
+    }
+  }
+
+  const nested =
+    data?.selected ||
+    data?.result ||
+    data?.primary_media ||
+    data?.results?.[0] ||
+    {}
+
+  const item = {
+    ...(data || {}),
+    ...nested
+  }
+
+  const audioUrl = pickDownloadUrl(item)
+
+  if (!audioUrl) {
+    throw lastError ||
+      new Error(
+        'Apple Music no entregó un enlace de audio.'
+      )
+  }
+
+  const title =
+    item.track_name ||
+    item.title ||
+    meta.track_name ||
+    meta.title ||
+    'Apple Music'
+
+  const artist =
+    item.artist_name ||
+    item.artist ||
+    meta.artist_name ||
+    meta.artist ||
+    'Apple Music'
+
+  const album =
+    item.album_name ||
+    item.album ||
+    meta.album_name ||
+    meta.album ||
+    ''
+
+  const coverUrl =
+    item.thumbnail ||
+    item.image ||
+    item.cover ||
+    item.artwork ||
+    meta.thumbnail ||
+    meta.image ||
+    ''
+
+  const rawFormat = String(
+    item.format || item.ext || 'mp3'
+  ).toLowerCase()
+
+  const isM4a =
+    rawFormat.includes('m4a') ||
+    rawFormat.includes('mp4') ||
+    String(item.mime_type || '')
+      .toLowerCase()
+      .includes('mp4')
+
+  await sendMusicDocumentCard(ctx, {
+    audioUrl,
+    title,
+    artist,
+    album,
+    coverUrl,
+    filename:
+      `${artist} - ${title}.${isM4a ? 'm4a' : 'mp3'}`
+        .replace(/[\\/:*?"<>|]+/g, '_'),
+    mimetype: isM4a ? 'audio/mp4' : 'audio/mpeg'
+  })
 }
 
 export const applemusic={name:'applemusic',aliases:['apple','amusic'],async execute(ctx){return apiTask(ctx,async()=>{
@@ -973,11 +1222,12 @@ export const applemusic={name:'applemusic',aliases:['apple','amusic'],async exec
   const data=await apiGet('/applemusicsearch',{q:input,limit:12})
   const list=(data.results||[]).slice(0,12);if(!list.length)throw new Error('No encontré canciones en Apple Music.')
   const token=saveSelection('applemusic',list)
+  const prefix=activePrefix(ctx)
   const rows=list.map((r,i)=>({
     header:r.genre||'Audio',
     title:`${r.artist_name||'Artista'} — ${r.track_name||'Canción'}`.slice(0,90),
     description:[r.album_name,formatDuration(r.duration_seconds)].filter(Boolean).join(' • ').slice(0,100),
-    id:`${config.prefix}applemusicpick ${token} ${i}`
+    id:`${prefix}applemusicpick ${token} ${i}`
   }))
   await sendInteractive(ctx.sock,ctx.chat,{
     title:'Apple Music Downloader',
@@ -992,7 +1242,7 @@ export const applemusicpick={name:'applemusicpick',aliases:[],async execute(ctx)
   if(!item)throw new Error('La selección venció. Ejecuta .applemusic nuevamente.')
   const url=item.song_url||item.apple_music_url
   if(!url)throw new Error('El resultado elegido no contiene un enlace de Apple Music.')
-  await runDownloadJob(ctx,'light','.applemusic',()=>downloadAppleMusic(ctx,url))
+  await runDownloadJob(ctx,'light','.applemusic',()=>downloadAppleMusic(ctx,url,item))
 })}}
 
 async function apkSearch(ctx, mod = false) {

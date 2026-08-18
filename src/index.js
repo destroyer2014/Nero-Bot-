@@ -25,6 +25,10 @@ import { consumeSubbotEvents } from './lib/subbotEvents.js'
 import { sendInteractive, copyButton } from './lib/interactive.js'
 import { getInstanceMode, privateCommandsAllowed } from './lib/modeStore.js'
 import { checkCommandRate, rateLimitMessage } from './lib/commandGuard.js'
+import { waitCommandResponseDelay } from './lib/commandDelay.js'
+import { initializeTempStorage } from './lib/diskGuard.js'
+import { bindSafeCreds } from './lib/authStorage.js'
+import { logConnectionEvent } from './lib/runtimeLog.js'
 import { createInstanceHeartbeat } from './lib/instanceHeartbeat.js'
 import { hasPendingSubbotPhone, clearPendingSubbotPhone } from './lib/pendingSubbotPhone.js'
 import { createSubbotForPhone } from './commands/subbots.js'
@@ -43,6 +47,11 @@ import {
 const logger = pino({ level: process.env.BAILEYS_LOG_LEVEL || 'silent' })
 const sessionPath = path.resolve('sessions', config.sessionName)
 const instanceHeartbeat = createInstanceHeartbeat('principal', 'principal')
+
+await initializeTempStorage({ aggressive: true })
+  .catch(error =>
+    console.warn('[TEMP]', error?.message || error)
+  )
 
 let phoneNumber = null
 let pairingCodeRequested = false
@@ -389,7 +398,10 @@ async function startNeroBot() {
     keepAliveIntervalMs: 10_000
   })
 
-  sock.ev.on('creds.update', saveCreds)
+  bindSafeCreds(sock, saveCreds, {
+    instanceType: 'principal',
+    instanceId: 'principal'
+  })
   startGachaScheduler(sock)
 
   startSubbotEventConsumer(sock)
@@ -421,6 +433,12 @@ async function startNeroBot() {
       phoneNumber = null
       console.log(`✅ ${config.botName} conectado como ${sock.user?.id || 'cuenta vinculada'}`)
       console.log(`📌 Tipo de instancia: ${config.instanceType === 'subbot' ? 'Subbot' : 'Bot principal'}`)
+      await logConnectionEvent({
+        instanceType: 'principal',
+        instanceId: 'principal',
+        event: 'open',
+        jid: sock.user?.id || sock.user?.jid || ''
+      })
       instanceHeartbeat.setOnline(true)
       await refreshPrincipalPresence(sock).catch(error =>
         console.warn('[INSTANCE ROUTER]', error?.message || error)
@@ -430,6 +448,13 @@ async function startNeroBot() {
     if (connection === 'close') {
       instanceHeartbeat.setOnline(false)
       const statusCode = new Boom(lastDisconnect?.error)?.output?.statusCode
+      await logConnectionEvent({
+        instanceType: 'principal',
+        instanceId: 'principal',
+        event: 'close',
+        statusCode: statusCode || null,
+        error: lastDisconnect?.error || null
+      })
       const loggedOut = statusCode === DisconnectReason.loggedOut
 
       if (loggedOut) {
@@ -535,6 +560,8 @@ async function startNeroBot() {
 
         const [rawCommand, ...args] = text.slice(config.prefix.length).trim().split(/\s+/)
         if (!rawCommand) continue
+
+        await waitCommandResponseDelay()
 
         const command = findCommand(rawCommand)
         if (!command) {

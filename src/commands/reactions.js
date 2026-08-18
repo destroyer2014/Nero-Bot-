@@ -9,6 +9,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
 import config from '../../config.js'
+import { getNeroTempRoot } from '../lib/diskGuard.js'
 
 const execAsync = promisify(exec)
 
@@ -69,7 +70,7 @@ async function fetchGifUrl(api) {
 
 // ── Convierte el GIF/WEBP a MP4 (o lo devuelve directo si ya es mp4) ──
 async function gifToMp4Buffer(gifUrl) {
-  const tmp = tmpdir()
+  const tmp = await getNeroTempRoot()
   const ts = Date.now()
   const mp4Path = join(tmp, `nero_reac_${ts}.mp4`)
   let inPath = null

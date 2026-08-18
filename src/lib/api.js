@@ -13,7 +13,7 @@ export class ApiError extends Error {
 
 export function requireApiKey() {
   const key = process.env.DVYER_API_KEY?.trim()
-  if (!key) throw new ApiError('Falta configurar DVYER_API_KEY en el archivo .env del VPS.')
+  if (!key) throw new ApiError('Falta configurar DVYER_API_KEY en el archivo .env del servidor.')
   return key
 }
 
@@ -49,7 +49,7 @@ export async function apiGet(endpoint, params = {}, options = {}) {
 
 export function requireEvoGbApiKey() {
   const key = process.env.EVOGB_API_KEY?.trim()
-  if (!key) throw new ApiError('Falta configurar EVOGB_API_KEY en el archivo .env del VPS.')
+  if (!key) throw new ApiError('Falta configurar EVOGB_API_KEY en el archivo .env del servidor.')
   return key
 }
 

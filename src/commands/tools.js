@@ -7,6 +7,7 @@ import path from 'node:path'
 import config from '../../config.js'
 import { apiGet, evoGet, requireEvoGbApiKey } from '../lib/api.js'
 import { sendRemoteMedia, sendImageAlbum, formatBytes, isLikelyUrl } from '../lib/media.js'
+import { getNeroTempRoot } from '../lib/diskGuard.js'
 
 const q=ctx=>ctx.args.join(' ').trim()
 const usage=(n,v)=>`Uso: *${config.prefix}${n} ${v}*`
@@ -134,7 +135,7 @@ async function encodeVideoSticker(input,output,{fps,quality}){
  ])
 }
 async function videoToSticker(buffer){
- const dir=await fs.mkdtemp(path.join(os.tmpdir(),'nero-sticker-'))
+ const dir=await fs.mkdtemp(path.join(await getNeroTempRoot(),'nero-sticker-'))
  const input=path.join(dir,'input.mp4')
  const output=path.join(dir,'output.webp')
  try{

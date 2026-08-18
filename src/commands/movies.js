@@ -13,6 +13,10 @@ import {
 import { pickDownloadUrl } from '../lib/media.js'
 import { runDownloadJob } from '../lib/downloadQueue.js'
 import {
+  ensureDiskSpace,
+  getNeroTempRoot
+} from '../lib/diskGuard.js'
+import {
   downloadLargeMediaSource,
   sendLargeVideoAsDocuments,
   sendLargeVideoFileAsDocuments
@@ -570,7 +574,10 @@ async function resolveMovieDownload(slug) {
 
 async function sendMovieArchive(ctx, resolved, title) {
   const dir = await fs.mkdtemp(
-    path.join(os.tmpdir(), `nero-movie-${randomUUID().slice(0, 8)}-`)
+    path.join(
+      await getNeroTempRoot(),
+      `nero-movie-${randomUUID().slice(0, 8)}-`
+    )
   )
 
   const format =
@@ -586,6 +593,12 @@ async function sendMovieArchive(ctx, resolved, title) {
 
   try {
     await downloadLargeMediaSource(resolved.url, archiveFile)
+
+    const archiveStat = await fs.stat(archiveFile)
+    await ensureDiskSpace(
+      Math.ceil(archiveStat.size * 1.75),
+      { label: 'extraer la película comprimida' }
+    )
 
     await extractMovieArchive(
       archiveFile,

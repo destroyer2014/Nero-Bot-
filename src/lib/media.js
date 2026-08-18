@@ -107,7 +107,15 @@ export async function sendRemoteMedia(sock, chat, item, { quoted, caption = '', 
   const size = Number(item.size_bytes || item.filesize_bytes || item.content_length || 0)
 
   if (size && size > config.maxUploadBytes) {
-    await sock.sendMessage(chat, { text: `⚠️ *Archivo demasiado grande para envío automático*\n📄 ${filename}\n📦 ${formatBytes(size)}\n🔗 ${url}` }, { quoted })
+    await sock.sendMessage(chat, {
+      text: [
+        '⚠️ *Archivo demasiado grande para envío automático*',
+        `📄 ${filename}`,
+        `📦 ${formatBytes(size)}`,
+        '',
+        '> Nero no mostrará enlaces internos de descarga.'
+      ].join('\n')
+    }, { quoted })
     return
   }
 

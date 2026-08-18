@@ -1,13 +1,50 @@
 import crypto from 'node:crypto'
+import { logRuntimeEvent } from './runtimeLog.js'
+
 const recent = new Map()
 const TTL = 30 * 60 * 1000
-export function rememberError({ sender, chat, command, error, instanceType='principal' }) {
-  const code = `NERO-${crypto.randomBytes(3).toString('hex').toUpperCase()}`
-  recent.set(sender, { code, chat, command, message: error?.message || String(error), stack: error?.stack || '', instanceType, createdAt: Date.now() })
+
+export function rememberError({
+  sender,
+  chat,
+  command,
+  error,
+  instanceType = 'principal'
+}) {
+  const code =
+    `NERO-${crypto.randomBytes(3).toString('hex').toUpperCase()}`
+
+  const item = {
+    code,
+    chat,
+    command,
+    message: error?.message || String(error),
+    stack: error?.stack || '',
+    instanceType,
+    createdAt: Date.now()
+  }
+
+  recent.set(sender, item)
+
+  void logRuntimeEvent('errors', {
+    code,
+    sender,
+    chat,
+    command,
+    instanceType,
+    error
+  })
+
   return code
 }
+
 export function getRecentError(sender) {
   const item = recent.get(sender)
-  if (!item || Date.now() - item.createdAt > TTL) { recent.delete(sender); return null }
+
+  if (!item || Date.now() - item.createdAt > TTL) {
+    recent.delete(sender)
+    return null
+  }
+
   return item
 }

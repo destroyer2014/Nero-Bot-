@@ -1,4 +1,8 @@
 import { rememberError } from './errorReports.js'
+import {
+  diskSpaceUserMessage,
+  isDiskSpaceError
+} from './diskGuard.js'
 
 function commandFromText(text = '') {
   return String(text || '').trim().split(/\s+/)[0] || ''
@@ -79,7 +83,48 @@ function apiFriendlyMessage(error) {
     return 'El servicio externo no pudo completar la solicitud. Inténtalo nuevamente.'
   }
 
-  return message || 'El servicio externo no pudo completar la solicitud.'
+  return message ||
+    'El servicio externo no pudo completar la solicitud.'
+}
+
+function processFriendlyMessage(error) {
+  const message = cleanMessage(error)
+
+  if (isDiskSpaceError(error)) {
+    return diskSpaceUserMessage()
+  }
+
+  if (/ffmpeg|ffprobe/i.test(message)) {
+    return [
+      '❌ No pude procesar el archivo multimedia.',
+      '',
+      'El conversor de video/audio del servidor encontró un problema.',
+      '> Intenta nuevamente. Si persiste, usa *.soporte*.'
+    ].join('\n')
+  }
+
+  if (
+    /fetch failed|ECONNRESET|ETIMEDOUT|EAI_AGAIN|socket hang up/i.test(
+      message
+    )
+  ) {
+    return [
+      '❌ La descarga perdió conexión con el servidor externo.',
+      '',
+      '> Intenta nuevamente dentro de unos minutos.'
+    ].join('\n')
+  }
+
+  if (/excede|supera el máximo|demasiado grande/i.test(message)) {
+    return `❌ ${message}`
+  }
+
+  return [
+    '❌ No se pudo completar el comando.',
+    '',
+    'El proceso encontró un error temporal.',
+    '> Intenta nuevamente. Si vuelve a ocurrir, usa *.soporte*.'
+  ].join('\n')
 }
 
 export function recordCommandError({
@@ -101,8 +146,15 @@ export function recordCommandError({
   })
 }
 
-export function commandErrorMessage(_code = '', error = null) {
+export function commandErrorMessage(
+  _code = '',
+  error = null
+) {
   const message = cleanMessage(error)
+
+  if (isDiskSpaceError(error)) {
+    return diskSpaceUserMessage()
+  }
 
   if (isExpectedCommandError(error)) {
     return `❌ ${message}`
@@ -116,10 +168,5 @@ export function commandErrorMessage(_code = '', error = null) {
     ].join('\n')
   }
 
-  return [
-    '❌ No se pudo completar el comando.',
-    '',
-    'El proceso encontró un error temporal.',
-    '> Intenta nuevamente. Si vuelve a ocurrir, usa *.soporte*.'
-  ].join('\n')
+  return processFriendlyMessage(error)
 }

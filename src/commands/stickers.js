@@ -5,6 +5,12 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { spawn } from 'node:child_process'
 import config from '../../config.js'
+import {
+  diskSpaceUserMessage,
+  ensureDiskSpace,
+  isDiskSpaceError,
+  recoverDiskSpace
+} from '../lib/diskGuard.js'
 import { getStickerMeta, setStickerMeta, delStickerMeta } from '../lib/stickerMeta.js'
 
 const q = ctx => ctx.args.join(' ').trim()
@@ -110,9 +116,20 @@ function wrap(name, aliases, fn) {
     aliases,
     async execute(ctx) {
       try {
+        await ensureDiskSpace(
+          32 * 1024 * 1024,
+          { label: 'procesar el sticker' }
+        )
         await fn(ctx)
       } catch (error) {
         await react(ctx, '❌')
+        if (isDiskSpaceError(error)) {
+          await recoverDiskSpace().catch(() => {})
+          await ctx.sock.sendMessage(ctx.chat, {
+            text: diskSpaceUserMessage()
+          }, { quoted: ctx.msg })
+          return
+        }
         await ctx.sock.sendMessage(ctx.chat, {
           text: `❌ ${error?.message || 'No se pudo completar el comando de sticker.'}`
         }, { quoted: ctx.msg })

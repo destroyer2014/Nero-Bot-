@@ -3,6 +3,10 @@ import os from 'node:os'
 import path from 'node:path'
 import { spawn } from 'node:child_process'
 import sharp from 'sharp'
+import {
+  ensureDiskSpace,
+  getNeroTempRoot
+} from './diskGuard.js'
 
 const MAX_AUDIO_BYTES = Math.max(
   20,
@@ -93,7 +97,7 @@ function runFfmpeg(args, timeoutMs = 7 * 60 * 1000) {
       settled = true
       clearTimeout(timer)
       if (error?.code === 'ENOENT') {
-        reject(new Error('FFmpeg no está disponible en el VPS.'))
+        reject(new Error('FFmpeg no está disponible en el servidor.'))
       } else {
         reject(error)
       }
@@ -128,7 +132,14 @@ export async function createTaggedAudio({
 } = {}) {
   if (!audioUrl) throw new Error('No hay un enlace de audio para procesar.')
 
-  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'nero-audio-'))
+  await ensureDiskSpace(
+    Math.ceil(MAX_AUDIO_BYTES * 2.2),
+    { label: 'procesar el audio y su portada' }
+  )
+
+  const dir = await fs.mkdtemp(
+    path.join(await getNeroTempRoot(), 'nero-audio-')
+  )
   const source = path.join(dir, 'source.bin')
   const cover = path.join(dir, 'cover.jpg')
   const output = path.join(dir, 'tagged.mp3')

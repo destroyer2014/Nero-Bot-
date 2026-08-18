@@ -1,7 +1,7 @@
 {
   "name": "nero-bot",
-  "version": "1.18.7",
-  "description": "Nero Bot v1.18.7: SubBots sin spam de grupos y sincronización con cooldown",
+  "version": "1.18.8",
+  "description": "Nero Bot v1.18.8: estabilidad de disco, delay global, fallbacks multimedia y Free Fire Stalking",
   "type": "module",
   "main": "src/index.js",
   "scripts": {
@@ -14,7 +14,7 @@
     "panel:check": "node scripts/panel-check.cjs"
   },
   "engines": {
-    "node": ">=20"
+    "node": "^20.0.0 || >=22.0.0"
   },
   "dependencies": {
     "@hapi/boom": "^10.0.1",

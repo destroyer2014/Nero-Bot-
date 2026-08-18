@@ -211,7 +211,8 @@ const categories = {
       '.instagramstalk <usuario>',
       '.robloxstalk <usuario>',
       '.telegramstalk <canal>',
-      '.tiktokstalk <usuario>'
+      '.tiktokstalk <usuario>',
+      '.ffstalk <ID> [región]'
     ]
   },
   nsfw: {
@@ -431,6 +432,7 @@ const commandDescriptions = {
   robloxstalk: 'Consulta información pública de una cuenta de Roblox.',
   telegramstalk: 'Consulta información pública de un canal de Telegram.',
   tiktokstalk: 'Consulta información pública de un perfil de TikTok.',
+  ffstalk: 'Consulta información pública de un perfil de Free Fire por ID.',
 
   nsfwmenu: 'Muestra los comandos de la sección NSFW.',
   nsfwactivar: 'Activa o desactiva la sección NSFW en el grupo.',

@@ -8,13 +8,17 @@ import { pipeline } from 'node:stream/promises'
 import { spawn } from 'node:child_process'
 import config from '../../config.js'
 import { formatBytes } from './media.js'
+import {
+  ensureDiskSpace,
+  getNeroTempRoot
+} from './diskGuard.js'
 
 const MB = 1024 * 1024
 const partLimit = () => Math.max(20 * MB, Math.min(
   Number(process.env.LARGE_MEDIA_PART_MB || 80) * MB,
   Math.max(20 * MB, Number(config.maxUploadBytes || 90 * MB) - 5 * MB)
 ))
-const maxSource = () => Math.max(100 * MB, Number(process.env.LARGE_MEDIA_MAX_SOURCE_MB || 1536) * MB)
+const maxSource = () => Math.max(100 * MB, Number(process.env.LARGE_MEDIA_MAX_SOURCE_MB || 4096) * MB)
 
 function safeName(v='video') {
   return String(v || 'video').replace(/[\\/:*?"<>|]+/g,'_').replace(/\s+/g,' ').trim().slice(0,140) || 'video'
@@ -32,7 +36,7 @@ async function run(cmd,args,timeout=20*60*1000) {
 
 async function ffmpegReady() {
   try { await run('ffmpeg',['-version'],10000); await run('ffprobe',['-version'],10000) }
-  catch { throw new Error('El video necesita dividirse, pero FFmpeg/FFprobe no está disponible en el VPS.') }
+  catch { throw new Error('El video necesita dividirse, pero FFmpeg/FFprobe no está disponible en el servidor.') }
 }
 
 async function durationOf(file) {
@@ -91,6 +95,13 @@ async function download(url, target, maxSourceBytes = 0) {
           `El archivo pesa ${formatBytes(declared)} y supera el máximo permitido de ${formatBytes(effectiveMax)}.`
         )
       }
+
+      await ensureDiskSpace(
+        declared > 0
+          ? declared
+          : Math.min(effectiveMax, 256 * MB),
+        { label: 'la descarga multimedia' }
+      )
 
       let received = 0
 
@@ -163,6 +174,11 @@ async function splitMp4(input,dir,maxBytes) {
   const source=await fsp.stat(input)
   const duration=await durationOf(input)
 
+  await ensureDiskSpace(
+    Math.ceil(source.size * 1.20),
+    { label: 'dividir el video en partes' }
+  )
+
   let wanted=Math.max(2,Math.ceil(source.size/(maxBytes*0.65)))
   const maxParts=Math.max(40,Math.min(160,Math.ceil(source.size/(maxBytes*0.30))))
 
@@ -221,7 +237,7 @@ export async function sendLargeVideoAsDocuments(sock,chat,{
   if(!url) throw new Error('No existe una URL para descargar el video.')
 
   const dir=await fsp.mkdtemp(
-    path.join(os.tmpdir(),`nero-large-${randomUUID().slice(0,8)}-`)
+    path.join(await getNeroTempRoot(),`nero-large-${randomUUID().slice(0,8)}-`)
   )
   const clean=safeName(title)
   const source=path.join(dir,`${clean}.mp4`)
@@ -359,7 +375,7 @@ export async function sendLargeVideoFileAsDocuments(sock, chat, {
   }
 
   const dir = await fsp.mkdtemp(
-    path.join(os.tmpdir(), `nero-split-${randomUUID().slice(0, 8)}-`)
+    path.join(await getNeroTempRoot(), `nero-split-${randomUUID().slice(0, 8)}-`)
   )
 
   try {

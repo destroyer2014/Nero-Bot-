@@ -4,6 +4,7 @@ import { sendInteractive, singleSelect } from '../lib/interactive.js'
 import { runDownloadJob } from '../lib/downloadQueue.js'
 import { saveSelection, getSelection } from '../lib/selectionCache.js'
 import { sendLargeVideoAsDocuments } from '../lib/largeMedia.js'
+import { pickDownloadUrl } from '../lib/media.js'
 
 const NERO_CREDIT = 'Nero AI™ | ©ArcadiaCorps'
 const ANIME_SEARCH_LIMIT = 10
@@ -20,7 +21,7 @@ const ANIME_SPLIT_PART_BYTES = Math.max(
 
 const ANIME_MAX_SOURCE_BYTES = Math.max(
   1024,
-  Number(process.env.ANIME_MAX_SOURCE_MB || 4096)
+  Number(process.env.ANIME_MAX_SOURCE_MB || 6144)
 ) * 1024 * 1024
 
 const animeCooldown = new Map()
@@ -58,10 +59,13 @@ function isTransientAnimeStatus(status) {
   return transientAnimeStatuses.has(Number(status || 0))
 }
 
-function animeErrorMessage(error) {
+function animeErrorMessage(error, commandName = '') {
   const status = Number(error?.status || 0)
 
   if (status === 404) {
+    if (['animeairing', 'animeschedule', 'animelatest', 'animetrending'].includes(commandName)) {
+      return 'No pude cargar esa sección del catálogo de anime en este momento. Intenta nuevamente más tarde.'
+    }
     return 'No encontré ese anime o episodio. Puede que ya no esté disponible en el catálogo.'
   }
 
@@ -91,7 +95,7 @@ const wrap = (name, aliases, description, fn) => ({
       console.error(`[ANIME:${name}]`, error?.message || error)
       await ctx.sock.sendMessage(
         ctx.chat,
-        { text: `❌ ${animeErrorMessage(error)}` },
+        { text: `❌ ${animeErrorMessage(error, name)}` },
         { quoted: ctx.msg }
       ).catch(() => {})
     }
@@ -160,6 +164,183 @@ async function animeApiRetry(action, params = {}, options = {}) {
   }
 
   throw lastError || new Error('No se pudo consultar el servidor de anime.')
+}
+
+const LEGACY_ANIME_ALIASES = {
+  'rezero': 're-zero-kara-hajimeru-isekai-seikatsu',
+  're-zero': 're-zero-kara-hajimeru-isekai-seikatsu',
+  're-zero-kara-hajimeru': 're-zero-kara-hajimeru-isekai-seikatsu',
+  'sao': 'sword-art-online'
+}
+
+function legacyAnimeSlug(value = '') {
+  return String(value || '')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+}
+
+async function legacyAnimeData(name) {
+  const normalized = legacyAnimeSlug(name)
+  const candidates = [
+    ...new Set([
+      LEGACY_ANIME_ALIASES[normalized],
+      normalized
+    ].filter(Boolean))
+  ]
+
+  let lastError = null
+
+  for (const slug of candidates) {
+    try {
+      const data = await apiGet(
+        `/anime/subespanol/${slug}`,
+        { episode_limit: 80 },
+        { timeoutMs: 180000 }
+      )
+
+      const info = data?.anime_info || {}
+      const chapters = (data?.temporadas || [])
+        .flatMap(season => season?.capitulos || [])
+
+      if (info.titulo || chapters.length) {
+        return {
+          slug,
+          data,
+          info,
+          chapters
+        }
+      }
+    } catch (error) {
+      lastError = error
+    }
+  }
+
+  if (lastError) throw lastError
+  return null
+}
+
+async function sendLegacyAnimeDetail(ctx, name) {
+  let legacy
+
+  try {
+    legacy = await legacyAnimeData(name)
+  } catch {
+    return false
+  }
+
+  if (!legacy?.chapters?.length) return false
+
+  const title =
+    cleanText(legacy.info?.titulo) ||
+    cleanText(name) ||
+    legacy.slug
+
+  const usable = legacy.chapters
+    .filter(item => Number(item?.capitulo_numero) > 0)
+    .slice(0, 80)
+
+  if (!usable.length) return false
+
+  const token = saveSelection(
+    'anime-legacy-v1',
+    {
+      slug: legacy.slug,
+      title,
+      chapters: usable
+    }
+  )
+
+  const prefix = prefixOf(ctx)
+  const rows = usable.map((item, index) => ({
+    header: `Episodio ${item.capitulo_numero}`,
+    title:
+      `📺 ${cleanText(item.titulo_capitulo) || `Episodio ${item.capitulo_numero}`}`
+        .slice(0, 90),
+    description: 'Descargar episodio',
+    id:
+      `${prefix}animelegacyepisode ${token} ${index}`
+  }))
+
+  rows.push({
+    header: 'Catálogo',
+    title: '📋 Volver al Catálogo Anime',
+    description: 'Explorar otras opciones',
+    id: `${prefix}anime`
+  })
+
+  await sendInteractive(
+    ctx.sock,
+    ctx.chat,
+    {
+      title: `🌸 ${title}`.slice(0, 100),
+      body: [
+        '🔄 *Fuente alternativa activada*',
+        `📺 Episodios disponibles: *${usable.length}*`,
+        '',
+        'Selecciona el capítulo que deseas ver.'
+      ].join('\n'),
+      footer: NERO_CREDIT,
+      media: legacy.info?.imagen_portada
+        ? { image: { url: legacy.info.imagen_portada } }
+        : null,
+      buttons: [
+        singleSelect(
+          '📺 Ver Episodios',
+          rowSections(rows, 'Episodios')
+        )
+      ]
+    },
+    ctx.msg
+  )
+
+  return true
+}
+
+async function resolveLegacyAnimeSource(chapter) {
+  const links = (chapter?.enlaces_descarga || [])
+    .map(item => item?.url || item)
+    .filter(Boolean)
+
+  let lastError = null
+
+  for (const original of links) {
+    try {
+      let resolved
+
+      if (/mediafire\.com/i.test(original)) {
+        resolved = await apiGet(
+          '/mediafire',
+          { mode: 'link', url: original },
+          { timeoutMs: 180000 }
+        )
+      } else if (/mega\.nz/i.test(original)) {
+        resolved = await apiGet(
+          '/mega',
+          {
+            mode: 'link',
+            url: String(original)
+              .replace('/embed/', '/file/')
+          },
+          { timeoutMs: 180000 }
+        )
+      } else {
+        continue
+      }
+
+      const url = pickDownloadUrl(resolved)
+      if (url) return { url, resolved }
+    } catch (error) {
+      lastError = error
+    }
+  }
+
+  throw lastError ||
+    new Error(
+      'No encontré una fuente alternativa disponible para ese episodio.'
+    )
 }
 
 function statusLabel(value = '') {
@@ -239,7 +420,8 @@ async function sendAnimeSearch(ctx, query) {
       limit: ANIME_SEARCH_LIMIT
     })
   } catch (error) {
-    if (Number(error?.status || 0) === 404) {
+    if (await sendLegacyAnimeDetail(ctx, query)) return
+    if ([400, 404, 422].includes(Number(error?.status || 0))) {
       throw new Error(
         `No encontré el anime "${query}". Prueba con otro nombre.`
       )
@@ -252,6 +434,7 @@ async function sendAnimeSearch(ctx, query) {
     .slice(0, ANIME_SEARCH_LIMIT)
 
   if (!list.length) {
+    if (await sendLegacyAnimeDetail(ctx, query)) return
     throw new Error(
       `No encontré el anime "${query}". Prueba con otro nombre.`
     )
@@ -561,7 +744,12 @@ export const animePick = wrap(
     if (selected?.slug) {
       const slug = String(selected.slug).trim()
       if (!slug) throw new Error('La selección de anime no es válida.')
-      await sendAnimeDetail(ctx, slug, cleanText(selected.title))
+      try {
+        await sendAnimeDetail(ctx, slug, cleanText(selected.title))
+      } catch (error) {
+        if (await sendLegacyAnimeDetail(ctx, cleanText(selected.title))) return
+        throw error
+      }
       return
     }
 
@@ -693,6 +881,92 @@ export const animeEpisode = wrap(
       {
         text: [
           '✅ *Episodio enviado*',
+          `Episodio: *${episode}*`,
+          '',
+          `> ${NERO_CREDIT}`
+        ].join('\n')
+      },
+      { quoted: ctx.msg }
+    ).catch(() => {})
+  }
+)
+
+export const animeLegacyEpisode = wrap(
+  'animelegacyepisode',
+  [],
+  'Descarga un episodio desde la fuente alternativa.',
+  async ctx => {
+    const cached = getSelection(
+      String(ctx.args?.[0] || ''),
+      'anime-legacy-v1'
+    )
+
+    const index = Number(ctx.args?.[1])
+    const chapter = cached?.chapters?.[index]
+
+    if (!cached?.title || !chapter) {
+      throw new Error(
+        'La selección del episodio venció. Busca el anime nuevamente.'
+      )
+    }
+
+    const episode = Number(chapter.capitulo_numero || 0)
+    if (!episode) {
+      throw new Error('La selección del episodio no es válida.')
+    }
+
+    await runAnimeDownloadWithCooldown(ctx, async () => {
+      await ctx.sock.sendMessage(
+        ctx.chat,
+        {
+          text: [
+            '🌸 *Preparando episodio*',
+            '',
+            `Anime: *${cached.title}*`,
+            `Episodio: *${episode}*`,
+            'Fuente: alternativa',
+            '',
+            `> ${NERO_CREDIT}`
+          ].join('\n')
+        },
+        { quoted: ctx.msg }
+      ).catch(() => {})
+
+      const source = await resolveLegacyAnimeSource(chapter)
+
+      await sendLargeVideoAsDocuments(
+        ctx.sock,
+        ctx.chat,
+        {
+          url: source.url,
+          title: `${cached.title} - Episodio ${episode}`,
+          filename:
+            `${cached.title} - Episodio ${episode}.mp4`,
+          caption: [
+            `🌸 *${cached.title}*`,
+            `📺 Episodio ${episode}`,
+            '🔄 Fuente alternativa',
+            '',
+            `> ${NERO_CREDIT}`
+          ].join('\n'),
+          quoted: ctx.msg,
+          singleDocumentMaxBytes:
+            ANIME_SINGLE_DOCUMENT_BYTES,
+          splitPartBytes:
+            ANIME_SPLIT_PART_BYTES,
+          maxSourceBytes:
+            ANIME_MAX_SOURCE_BYTES,
+          silent: true
+        }
+      )
+    })
+
+    await ctx.sock.sendMessage(
+      ctx.chat,
+      {
+        text: [
+          '✅ *Episodio enviado*',
+          `Anime: *${cached.title}*`,
           `Episodio: *${episode}*`,
           '',
           `> ${NERO_CREDIT}`
@@ -848,6 +1122,7 @@ export const animeCommands = [
   animeQuery,
   animePick,
   animeEpisode,
+  animeLegacyEpisode,
   animeAiring,
   animenews,
   animeTrending,
