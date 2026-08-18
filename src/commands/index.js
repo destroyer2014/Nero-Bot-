@@ -109,6 +109,13 @@ function levenshtein(a = '', b = '') {
   return row[y.length]
 }
 
+function commonPrefixLength(a = '', b = '') {
+  const limit = Math.min(a.length, b.length)
+  let i = 0
+  while (i < limit && a[i] === b[i]) i += 1
+  return i
+}
+
 export function suggestCommand(name) {
   const raw = String(name || '').toLowerCase().trim()
   if (!raw) return ''
@@ -118,20 +125,81 @@ export function suggestCommand(name) {
   }
 
   const internal = /(?:pick|query|get|episode)$/i
-  const candidates = [...new Set(commandMap.keys())]
-    .filter(candidate => !internal.test(candidate))
+  const entries = []
 
-  let best = ''
-  let bestDistance = Infinity
+  for (const command of commands) {
+    const canonical = String(command?.name || '').toLowerCase()
+    if (!canonical || internal.test(canonical)) continue
 
-  for (const candidate of candidates) {
-    const distance = levenshtein(raw, candidate)
-    if (distance < bestDistance) {
-      best = candidate
-      bestDistance = distance
+    const keys = [
+      canonical,
+      ...(command.aliases || []).map(value =>
+        String(value || '').toLowerCase()
+      )
+    ]
+
+    for (const key of keys) {
+      if (!key || internal.test(key)) continue
+      entries.push({ key, canonical })
     }
   }
 
-  const threshold = Math.max(2, Math.ceil(raw.length * 0.35))
-  return bestDistance <= threshold ? best : ''
+  for (const entry of entries) {
+    if (
+      entry.key.length >= 2 &&
+      raw.startsWith(entry.key) &&
+      /^(?:https?:|www\.)/i.test(raw.slice(entry.key.length))
+    ) {
+      return entry.canonical
+    }
+  }
+
+  let best = null
+
+  for (const entry of entries) {
+    if (entry.key.length < 3 && raw.length > 3) continue
+
+    const maxLength = Math.max(raw.length, entry.key.length)
+    const distance = levenshtein(raw, entry.key)
+    const similarity = maxLength
+      ? 1 - (distance / maxLength)
+      : 0
+
+    const prefixLength = commonPrefixLength(raw, entry.key)
+    const prefixScore = prefixLength /
+      Math.max(1, Math.min(raw.length, entry.key.length))
+
+    const contains =
+      raw.includes(entry.key) ||
+      entry.key.includes(raw)
+
+    const score =
+      similarity * 0.72 +
+      prefixScore * 0.22 +
+      (contains ? 0.10 : 0)
+
+    if (!best || score > best.score) {
+      best = {
+        ...entry,
+        score,
+        prefixScore,
+        distance
+      }
+    }
+  }
+
+  if (!best) return ''
+
+  const accepted =
+    best.score >= 0.50 ||
+    (
+      best.prefixScore >= 0.35 &&
+      best.score >= 0.36 &&
+      best.distance <= Math.max(
+        4,
+        Math.ceil(Math.max(raw.length, best.key.length) * 0.60)
+      )
+    )
+
+  return accepted ? best.canonical : ''
 }

@@ -7,7 +7,7 @@ import { formatBytes, formatDuration, isLikelyUrl, pickDownloadUrl, sendImageAlb
 import { cancelUserJobs, clearWaitingQueues, formatQueueStatus, runDownloadJob } from '../lib/downloadQueue.js'
 import { getSelection, saveSelection } from '../lib/selectionCache.js'
 import { sendLargeVideoAsDocuments } from '../lib/largeMedia.js'
-import { sendTaggedAudio } from '../lib/audioTags.js'
+import { createTaggedAudio, sendTaggedAudio } from '../lib/audioTags.js'
 import { recordCommandError, commandErrorMessage } from '../lib/commandErrors.js'
 import sharp from 'sharp'
 import Webpmux from 'node-webpmux'
@@ -57,15 +57,41 @@ async function sendMusicDocumentCard(ctx, {
     throw new Error('No hay un enlace de audio disponible.')
   }
 
-  let jpegThumbnail
+  let tagged = null
+  let jpegThumbnail = null
+  let mediaUrl = audioUrl
+  let finalMimetype = mimetype
+  let safeName = String(
+    filename || `${artist} - ${title}.${mimetype === 'audio/mp4' ? 'm4a' : 'mp3'}`
+  )
+    .replace(/[\\/:*?"<>|]+/g, '_')
+    .slice(0, 150)
 
-  if (coverUrl) {
-    try {
-      const sourceCover = await fetchImageBuffer(coverUrl, 30000)
+  try {
+    tagged = await createTaggedAudio({
+      audioUrl,
+      title,
+      artist,
+      album,
+      coverUrl,
+      filename: `${artist} - ${title}.mp3`
+    })
 
-      // WhatsApp ignora con frecuencia thumbnails de documentos demasiado
-      // grandes. Generamos uno cuadrado pequeño y mantenemos el JPEG debajo
-      // de ~64 KB para máxima compatibilidad con Android/iOS.
+    mediaUrl = tagged.file
+    finalMimetype = tagged.mimetype
+    safeName = tagged.filename
+  } catch (error) {
+    console.warn(
+      '[MUSIC CARD] No pude incrustar metadata; envío original:',
+      error?.message || error
+    )
+  }
+
+  try {
+    const sourceCover = tagged?.coverBuffer ||
+      (coverUrl ? await fetchImageBuffer(coverUrl, 30000).catch(() => null) : null)
+
+    if (sourceCover) {
       let quality = 72
       let size = 320
 
@@ -79,58 +105,42 @@ async function sendMusicDocumentCard(ctx, {
         quality -= 12
         size = Math.max(180, size - 40)
       }
-
-      console.log(
-        '[MUSIC CARD] thumbnail:',
-        `${jpegThumbnail.length} bytes`,
-        title
-      )
-    } catch (error) {
-      console.warn(
-        '[MUSIC CARD] No pude preparar la portada:',
-        error?.message || error
-      )
     }
-  }
 
-  const extension = mimetype === 'audio/mp4' ? 'm4a' : 'mp3'
-  const safeName = String(
-    filename || `${artist} - ${title}.${extension}`
-  )
-    .replace(/[\\/:*?"<>|]+/g, '_')
-    .slice(0, 150)
+    const prepared = await prepareWAMessageMedia(
+      {
+        document: { url: mediaUrl },
+        mimetype: finalMimetype,
+        fileName: safeName
+      },
+      {
+        upload: ctx.sock.waUploadToServer
+      }
+    )
 
-  const prepared = await prepareWAMessageMedia(
-    {
-      document: { url: audioUrl },
-      mimetype,
-      fileName: safeName
-    },
-    {
-      upload: ctx.sock.waUploadToServer
+    const documentMessage = prepared?.documentMessage
+    if (!documentMessage) {
+      throw new Error('WhatsApp no pudo preparar la tarjeta del archivo.')
     }
-  )
 
-  const documentMessage = prepared?.documentMessage
-  if (!documentMessage) {
-    throw new Error('WhatsApp no pudo preparar la tarjeta del archivo.')
+    documentMessage.fileName = safeName
+    documentMessage.mimetype = finalMimetype
+
+    if (jpegThumbnail) {
+      documentMessage.jpegThumbnail = jpegThumbnail
+    }
+
+    await ctx.sock.sendMessage(
+      ctx.chat,
+      {
+        documentMessage,
+        raw: true
+      },
+      { quoted: ctx.msg }
+    )
+  } finally {
+    await tagged?.cleanup?.()
   }
-
-  documentMessage.fileName = safeName
-  documentMessage.mimetype = mimetype
-
-  if (jpegThumbnail) {
-    documentMessage.jpegThumbnail = jpegThumbnail
-  }
-
-  await ctx.sock.sendMessage(
-    ctx.chat,
-    {
-      documentMessage,
-      raw: true
-    },
-    { quoted: ctx.msg }
-  )
 }
 
 let fallbackTikTokCover
@@ -985,14 +995,93 @@ export const applemusicpick={name:'applemusicpick',aliases:[],async execute(ctx)
   await runDownloadJob(ctx,'light','.applemusic',()=>downloadAppleMusic(ctx,url))
 })}}
 
-async function apkSearch(ctx, mod=false){
-  const q=queryText(ctx.args); if(!q) throw new Error(usage(mod?'apkmod':'apk','<nombre>'))
-  const endpoint=mod?'/apkmoddl':'/apkdl'; const results=[]
-  for(let pick=1;pick<=5;pick++) { try { const d=await apiGet(endpoint,mod?{q,pick}:{mode:'link',q,pick,prefer:'auto',lang:'es'}); if(d?.title&&!results.some(x=>x.title===d.title&&x.version===d.version)) results.push({...d,_searchQuery:q,_pick:pick}) } catch { break } }
-  if(!results.length) throw new Error('No encontré aplicaciones.')
-  const token=saveSelection(mod?'apkmod':'apk',results); const rows=results.map((r,i)=>({header:mod?'APK MOD':'APK',title:r.title.slice(0,80),description:`v${r.version||'?'} • ${r.filesize||formatBytes(r.size_bytes)}`,id:`${config.prefix}${mod?'apkmodpick':'apkpick'} ${token} ${i}`}))
-  await sendInteractive(ctx.sock,ctx.chat,{title:mod?'Resultados APK MOD':'Resultados APK',body:`Búsqueda: *${q}*\nSelecciona una aplicación.`,media:results[0].icon?{image:{url:results[0].icon}}:null,buttons:[singleSelect('Ver resultados',[{title:mod?'Aplicaciones modificadas':'Aplicaciones',rows}])]},ctx.msg)
+async function apkSearch(ctx, mod = false) {
+  const q = queryText(ctx.args)
+  if (!q) throw new Error(usage(mod ? 'apkmod' : 'apk', '<nombre>'))
+
+  const endpoint = mod ? '/apkmoddl' : '/apkdl'
+  const results = []
+  let consecutiveMisses = 0
+
+  for (let pick = 1; pick <= 8; pick += 1) {
+    try {
+      const d = await apiGet(
+        endpoint,
+        mod
+          ? { q, pick }
+          : { mode: 'link', q, pick, prefer: 'auto', lang: 'es' },
+        { timeoutMs: 120000 }
+      )
+
+      if (
+        d?.title &&
+        !results.some(item =>
+          item.title === d.title &&
+          item.version === d.version
+        )
+      ) {
+        results.push({
+          ...d,
+          _searchQuery: q,
+          _pick: pick
+        })
+      }
+
+      consecutiveMisses = 0
+    } catch (error) {
+      consecutiveMisses += 1
+      if (consecutiveMisses >= 2 && results.length) break
+      if (consecutiveMisses >= 3) break
+    }
+  }
+
+  if (!results.length) {
+    throw new Error(
+      `No encontré aplicaciones para "${q}". Prueba con otro nombre.`
+    )
+  }
+
+  const token = saveSelection(mod ? 'apkmod' : 'apk', results)
+  const prefix = activePrefix(ctx)
+
+  const rows = results.map((item, index) => ({
+    header: mod ? 'APK MOD' : 'APK',
+    title: String(item.title || 'Aplicación').slice(0, 90),
+    description: [
+      'Elegir versión y variante',
+      item.version ? `v${item.version}` : ''
+    ].filter(Boolean).join(' • ').slice(0, 100),
+    id: `${prefix}${mod ? 'apkmodpick' : 'apkpick'} ${token} ${index}`
+  }))
+
+  await sendInteractive(
+    ctx.sock,
+    ctx.chat,
+    {
+      title: mod ? 'Resultados APK MOD' : 'Resultados APK',
+      body: [
+        `Búsqueda: *${q}*`,
+        '',
+        'Selecciona una aplicación para ver la versión disponible.'
+      ].join('\n'),
+      footer: NERO_CREDIT,
+      media: results[0]?.icon
+        ? { image: { url: results[0].icon } }
+        : null,
+      buttons: [
+        singleSelect(
+          'Ver resultados',
+          [{
+            title: mod ? 'APK MOD' : 'APK',
+            rows
+          }]
+        )
+      ]
+    },
+    ctx.msg
+  )
 }
+
 async function apkPick(ctx,mod=false){
   const list=getSelection(ctx.args[0],mod?'apkmod':'apk'); let d=list?.[Number(ctx.args[1])]; if(!d) throw new Error('La selección venció. Busca nuevamente.')
   const endpoint=mod?'/apkmoddl':'/apkdl'

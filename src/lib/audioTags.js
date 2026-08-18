@@ -6,7 +6,7 @@ import sharp from 'sharp'
 
 const MAX_AUDIO_BYTES = Math.max(
   20,
-  Number(process.env.TAGGED_AUDIO_MAX_MB || 120)
+  Number(process.env.TAGGED_AUDIO_MAX_MB || 180)
 ) * 1024 * 1024
 
 function safeText(value = '', fallback = '') {
@@ -20,7 +20,9 @@ function safeText(value = '', fallback = '') {
 function safeFilename(value = 'Nero Audio.mp3') {
   const cleaned = safeText(value, 'Nero Audio.mp3')
     .replace(/[\\/:*?"<>|]+/g, '_')
-    .slice(0, 150)
+    .replace(/\.(m4a|mp4|aac|ogg|opus|webm)$/i, '')
+    .slice(0, 145)
+
   return cleaned.toLowerCase().endsWith('.mp3')
     ? cleaned
     : `${cleaned}.mp3`
@@ -65,7 +67,7 @@ async function fetchBuffer(url, {
   }
 }
 
-function runFfmpeg(args, timeoutMs = 5 * 60 * 1000) {
+function runFfmpeg(args, timeoutMs = 7 * 60 * 1000) {
   return new Promise((resolve, reject) => {
     const child = spawn('ffmpeg', args, {
       stdio: ['ignore', 'ignore', 'pipe']
@@ -115,15 +117,14 @@ function runFfmpeg(args, timeoutMs = 5 * 60 * 1000) {
   })
 }
 
-export async function sendTaggedAudio(sock, chat, {
+export async function createTaggedAudio({
   audioUrl,
   title = 'Audio',
   artist = 'Nero',
   album = '',
   year = '',
   coverUrl = '',
-  filename = '',
-  quoted
+  filename = ''
 } = {}) {
   if (!audioUrl) throw new Error('No hay un enlace de audio para procesar.')
 
@@ -132,11 +133,17 @@ export async function sendTaggedAudio(sock, chat, {
   const cover = path.join(dir, 'cover.jpg')
   const output = path.join(dir, 'tagged.mp3')
 
+  const cleanup = async () => {
+    await fs.rm(dir, { recursive: true, force: true }).catch(() => {})
+  }
+
   try {
     const audio = await fetchBuffer(audioUrl)
     await fs.writeFile(source, audio)
 
     let hasCover = false
+    let coverBuffer = null
+
     if (coverUrl) {
       try {
         const rawCover = await fetchBuffer(coverUrl, {
@@ -145,16 +152,22 @@ export async function sendTaggedAudio(sock, chat, {
           accept: 'image/*,*/*;q=0.8'
         })
 
-        const jpeg = await sharp(rawCover)
+        coverBuffer = await sharp(rawCover)
           .rotate()
-          .resize(1000, 1000, { fit: 'cover', withoutEnlargement: true })
+          .resize(1200, 1200, {
+            fit: 'cover',
+            withoutEnlargement: true
+          })
           .jpeg({ quality: 90 })
           .toBuffer()
 
-        await fs.writeFile(cover, jpeg)
+        await fs.writeFile(cover, coverBuffer)
         hasCover = true
       } catch (error) {
-        console.warn('[AUDIO TAGS] portada omitida:', error?.message || error)
+        console.warn(
+          '[AUDIO TAGS] portada omitida:',
+          error?.message || error
+        )
       }
     }
 
@@ -171,7 +184,11 @@ export async function sendTaggedAudio(sock, chat, {
     ]
 
     if (hasCover) {
-      args.push('-i', cover, '-map', '0:a:0', '-map', '1:v:0')
+      args.push(
+        '-i', cover,
+        '-map', '0:a:0',
+        '-map', '1:v:0'
+      )
     } else {
       args.push('-map', '0:a:0')
     }
@@ -203,25 +220,49 @@ export async function sendTaggedAudio(sock, chat, {
     const stat = await fs.stat(output)
     if (!stat.size) throw new Error('FFmpeg generó un audio vacío.')
 
-    await sock.sendMessage(
-      chat,
-      {
-        audio: { url: output },
-        mimetype: 'audio/mpeg',
-        fileName: safeFilename(filename || `${finalArtist} - ${finalTitle}.mp3`),
-        ptt: false
-      },
-      { quoted }
-    )
-
     return {
+      file: output,
+      filename: safeFilename(
+        filename || `${finalArtist} - ${finalTitle}.mp3`
+      ),
+      mimetype: 'audio/mpeg',
       bytes: stat.size,
       title: finalTitle,
       artist: finalArtist,
       album: finalAlbum,
-      coverEmbedded: hasCover
+      coverEmbedded: hasCover,
+      coverBuffer,
+      cleanup
+    }
+  } catch (error) {
+    await cleanup()
+    throw error
+  }
+}
+
+export async function sendTaggedAudio(sock, chat, options = {}) {
+  const tagged = await createTaggedAudio(options)
+
+  try {
+    await sock.sendMessage(
+      chat,
+      {
+        audio: { url: tagged.file },
+        mimetype: tagged.mimetype,
+        fileName: tagged.filename,
+        ptt: false
+      },
+      { quoted: options.quoted }
+    )
+
+    return {
+      bytes: tagged.bytes,
+      title: tagged.title,
+      artist: tagged.artist,
+      album: tagged.album,
+      coverEmbedded: tagged.coverEmbedded
     }
   } finally {
-    await fs.rm(dir, { recursive: true, force: true }).catch(() => {})
+    await tagged.cleanup()
   }
 }

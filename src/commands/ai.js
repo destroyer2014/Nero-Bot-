@@ -56,8 +56,64 @@ async function traducirAlEspanol(texto) {
     return original
   }
 }
-function splitText(text,max=3500){const chunks=[];let rest=String(text||'');while(rest.length>max){let cut=rest.lastIndexOf('\n',max);if(cut<max*0.5)cut=max;chunks.push(rest.slice(0,cut));rest=rest.slice(cut).trimStart()}if(rest)chunks.push(rest);return chunks}
-async function sendAi(ctx,title,result){for(const [i,part] of splitText(result).entries())await ctx.sock.sendMessage(ctx.chat,{text:`${i===0?`🤖 *${title}*\n\n`:''}${part}${i===splitText(result).length-1?`\n\n${AI_CREDIT}`:''}`},{quoted:i===0?ctx.msg:undefined})}
+function splitText(text, max = 3000) {
+  const chunks = []
+  let rest = String(text || '')
+
+  while (rest.length > max) {
+    let cut = rest.lastIndexOf('\n', max)
+    if (cut < max * 0.5) cut = max
+    chunks.push(rest.slice(0, cut))
+    rest = rest.slice(cut).trimStart()
+  }
+
+  if (rest) chunks.push(rest)
+  return chunks
+}
+
+function aiCodeLabel(title = 'NERO IA') {
+  return String(title || 'NERO IA')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^A-Za-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '')
+    .toUpperCase() || 'NERO_IA'
+}
+
+async function sendAi(ctx, title, result) {
+  await ctx.sock.sendMessage(
+    ctx.chat,
+    {
+      text: [
+        `🤖 *${String(title || 'Nero IA').toUpperCase()}*`,
+        'Procesando tu pregunta...'
+      ].join('\n')
+    },
+    { quoted: ctx.msg }
+  ).catch(() => {})
+
+  const parts = splitText(result)
+  const label = aiCodeLabel(title)
+
+  for (let index = 0; index < parts.length; index += 1) {
+    const part = parts[index]
+
+    await ctx.sock.sendMessage(
+      ctx.chat,
+      {
+        text: [
+          `\`\`\`${label}`,
+          part,
+          '\`\`\`',
+          '',
+          AI_CREDIT
+        ].join('\n')
+      },
+      { quoted: index === 0 ? ctx.msg : undefined }
+    )
+  }
+}
+
 export const ia=wrap('ia',['chatgpt','gpt','ask'],async ctx=>{const text=q(ctx);if(!text)throw new Error(`Uso: ${config.prefix}ia <pregunta>`);const d=await evoGet('/ai/gptprompt',{text,prompt:NERO_PROMPT});await sendAi(ctx,'Nero IA',d.result)})
 export const gemini=wrap('gemini',['gem'],async ctx=>{const text=q(ctx);if(!text)throw new Error(`Uso: ${config.prefix}gemini <pregunta>`);const d=await evoGet('/ai/gemini',{text,prompt:GEMINI_PROMPT});await sendAi(ctx,'Gemini',d.result)})
 export const claude=wrap('claude',['devai'],async ctx=>{const text=q(ctx);if(!text)throw new Error(`Uso: ${config.prefix}claude <pregunta>`);const d=await evoGet('/ai/claude',{text});await sendAi(ctx,'Claude',d.result)})

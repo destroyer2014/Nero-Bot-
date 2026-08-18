@@ -1,7 +1,7 @@
 {
   "name": "nero-bot",
-  "version": "1.18.4",
-  "description": "Nero Bot v1.18.4: portada real en archivos de música y comandos desconocidos",
+  "version": "1.18.6",
+  "description": "Nero Bot v1.18.6: Panel Edition, SubBots sin PM2 y 7-Zip integrado",
   "type": "module",
   "main": "src/index.js",
   "scripts": {
@@ -10,7 +10,8 @@
     "check": "node --check src/index.js && node --check src/subbot-worker.js && find src/commands src/lib -name \"*.js\" -print0 | xargs -0 -n1 node --check",
     "subbot:config": "node scripts/subbot-config.js",
     "gacha:prefill": "node scripts/gacha-prefill-anilist.js",
-    "gacha:enrich": "node scripts/gacha-enrich-anilist.js"
+    "gacha:enrich": "node scripts/gacha-enrich-anilist.js",
+    "panel:check": "node scripts/panel-check.cjs"
   },
   "engines": {
     "node": ">=20"
@@ -22,6 +23,7 @@
     "sharp": "^0.34.3",
     "node-webpmux": "^3.2.1",
     "@itsliaaa/baileys": "0.3.18",
-    "pdfkit": "^0.16.0"
+    "pdfkit": "^0.16.0",
+    "7zip-bin-full": "^26.2.1"
   }
 }

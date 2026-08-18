@@ -47,31 +47,115 @@ async function durationOf(file) {
   })
 }
 
-async function download(url,target) {
-  const ctl=new AbortController()
-  const timer=setTimeout(()=>ctl.abort(),Number(process.env.LARGE_MEDIA_DOWNLOAD_TIMEOUT_MS||1800000))
-  try {
-    const r=await fetch(url,{signal:ctl.signal,redirect:'follow',headers:{
-      'user-agent':`${config.botName}/${config.version}`,
-      accept:'video/mp4,video/*,application/octet-stream,*/*;q=0.8',
-      'accept-encoding':'identity'
-    }})
-    if(!r.ok||!r.body) throw new Error(`La descarga respondió HTTP ${r.status}.`)
-    const declared=Number(r.headers.get('content-length')||0)
-    if(declared>maxSource()) throw new Error(`El archivo pesa ${formatBytes(declared)} y supera el máximo de descarga pesada.`)
-    let received=0
-    const limiter=new Transform({transform(chunk,_e,cb){
-      received+=chunk.length
-      received>maxSource()?cb(new Error(`La descarga superó ${formatBytes(maxSource())}.`)):cb(null,chunk)
-    }})
-    await pipeline(Readable.fromWeb(r.body),limiter,fs.createWriteStream(target))
-    const stat=await fsp.stat(target)
-    if(!stat.size) throw new Error('El archivo descargado quedó vacío.')
-    return stat.size
-  } catch(e) {
-    if(e?.name==='AbortError') throw new Error('La descarga pesada tardó demasiado y fue cancelada.')
-    throw e
-  } finally { clearTimeout(timer) }
+async function download(url, target, maxSourceBytes = 0) {
+  const effectiveMax = maxSourceBytes > 0
+    ? Math.max(100 * MB, Number(maxSourceBytes))
+    : maxSource()
+
+  let lastError
+
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    const ctl = new AbortController()
+    const timer = setTimeout(
+      () => ctl.abort(),
+      Number(process.env.LARGE_MEDIA_DOWNLOAD_TIMEOUT_MS || 1800000)
+    )
+
+    try {
+      await fsp.rm(target, { force: true }).catch(() => {})
+
+      const r = await fetch(url, {
+        signal: ctl.signal,
+        redirect: 'follow',
+        headers: {
+          'user-agent': `${config.botName}/${config.version}`,
+          accept: 'video/mp4,video/*,application/octet-stream,*/*;q=0.8',
+          'accept-encoding': 'identity'
+        }
+      })
+
+      if (!r.ok || !r.body) {
+        const error = new Error(
+          `La descarga respondió HTTP ${r.status}.`
+        )
+        error.status = r.status
+        throw error
+      }
+
+      const declared = Number(
+        r.headers.get('content-length') || 0
+      )
+
+      if (declared > effectiveMax) {
+        throw new Error(
+          `El archivo pesa ${formatBytes(declared)} y supera el máximo permitido de ${formatBytes(effectiveMax)}.`
+        )
+      }
+
+      let received = 0
+
+      const limiter = new Transform({
+        transform(chunk, _encoding, callback) {
+          received += chunk.length
+
+          if (received > effectiveMax) {
+            callback(new Error(
+              `La descarga superó ${formatBytes(effectiveMax)}.`
+            ))
+            return
+          }
+
+          callback(null, chunk)
+        }
+      })
+
+      await pipeline(
+        Readable.fromWeb(r.body),
+        limiter,
+        fs.createWriteStream(target)
+      )
+
+      const stat = await fsp.stat(target)
+      if (!stat.size) {
+        throw new Error('El archivo descargado quedó vacío.')
+      }
+
+      return stat.size
+    } catch (error) {
+      lastError = error
+
+      if (error?.name === 'AbortError') {
+        lastError = new Error(
+          'La descarga pesada tardó demasiado y fue cancelada.'
+        )
+      }
+
+      const status = Number(error?.status || 0)
+      const transient =
+        [429, 500, 502, 503, 504].includes(status) ||
+        error?.name === 'AbortError' ||
+        /fetch failed|ECONNRESET|ETIMEDOUT|EAI_AGAIN/i.test(
+          String(error?.message || '')
+        )
+
+      if (!transient || attempt >= 3) {
+        throw lastError
+      }
+
+      const delay = 1500 * attempt * attempt
+      console.warn(
+        '[LARGE MEDIA] reintentando descarga:',
+        attempt + 1,
+        error?.message || error
+      )
+
+      await new Promise(resolve => setTimeout(resolve, delay))
+    } finally {
+      clearTimeout(timer)
+    }
+  }
+
+  throw lastError || new Error('No se pudo descargar el archivo.')
 }
 
 async function splitMp4(input,dir,maxBytes) {
@@ -116,7 +200,7 @@ async function splitMp4(input,dir,maxBytes) {
     if(wanted>=maxParts&&attempt>=8)break
   }
 
-  throw new Error('No pude dividir esta película dentro del límite de WhatsApp. Intenta nuevamente o usa una fuente de menor tamaño.')
+  throw new Error('No pude dividir este video dentro del límite de WhatsApp. Intenta nuevamente o usa una fuente de menor tamaño.')
 }
 
 async function sendDoc(sock,chat,file,filename,caption,quoted) {
@@ -131,7 +215,8 @@ export async function sendLargeVideoAsDocuments(sock,chat,{
   quoted,
   singleDocumentMaxBytes=0,
   splitPartBytes=0,
-  silent=false
+  silent=false,
+  maxSourceBytes=0
 }={}) {
   if(!url) throw new Error('No existe una URL para descargar el video.')
 
@@ -149,7 +234,7 @@ export async function sendLargeVideoAsDocuments(sock,chat,{
     : normalLimit
 
   try {
-    const bytes=await download(url,source)
+    const bytes=await download(url,source,maxSourceBytes)
 
     if(bytes<=directLimit){
       try {
@@ -200,10 +285,14 @@ export async function sendLargeVideoAsDocuments(sock,chat,{
   }
 }
 
-export async function downloadLargeMediaSource(url, target) {
+export async function downloadLargeMediaSource(
+  url,
+  target,
+  { maxSourceBytes = 0 } = {}
+) {
   if (!url) throw new Error('No existe una URL para descargar el archivo.')
   if (!target) throw new Error('No existe una ruta de destino para la descarga.')
-  return download(url, target)
+  return download(url, target, maxSourceBytes)
 }
 
 export async function sendLargeVideoFileAsDocuments(sock, chat, {

@@ -30,9 +30,13 @@ export function isExpectedCommandError(error) {
     /^La selección /i,
     /^No tienes /i,
     /^No encontré /i,
-    /^No pude extraer /i,
-    /^No pude dividir /i,
-    /^La fuente de esta película /i,
+    /^No pude /i,
+    /^La fuente /i,
+    /^La descarga /i,
+    /^El servidor /i,
+    /^El archivo /i,
+    /^El video /i,
+    /^El audio /i,
     /^No se detectaron /i,
     /^El número /i,
     /^Ese número /i,
@@ -41,12 +45,41 @@ export function isExpectedCommandError(error) {
     /^El usuario /i,
     /^El bot necesita /i,
     /^Nero necesita /i,
+    /^WhatsApp /i,
     /^Speedtest:/i
   ].some(pattern => pattern.test(message))
 }
 
 function isApiError(error) {
-  return error?.name === 'ApiError' || Number.isFinite(Number(error?.status))
+  return error?.name === 'ApiError' ||
+    Number.isFinite(Number(error?.status))
+}
+
+function apiFriendlyMessage(error) {
+  const status = Number(error?.status || 0)
+  const message = cleanMessage(error)
+
+  if (status === 404) {
+    return 'No encontré ese contenido o ya no está disponible.'
+  }
+
+  if ([400, 422].includes(status)) {
+    return 'La solicitud fue rechazada por el servidor. Revisa el enlace o los datos e inténtalo nuevamente.'
+  }
+
+  if (status === 429) {
+    return 'El servicio está recibiendo demasiadas solicitudes. Espera un momento e inténtalo otra vez.'
+  }
+
+  if ([500, 502, 503, 504].includes(status)) {
+    return 'El servicio externo está temporalmente inestable. Inténtalo nuevamente en unos minutos.'
+  }
+
+  if (/HTTP\s+\d{3}/i.test(message)) {
+    return 'El servicio externo no pudo completar la solicitud. Inténtalo nuevamente.'
+  }
+
+  return message || 'El servicio externo no pudo completar la solicitud.'
 }
 
 export function recordCommandError({
@@ -57,8 +90,6 @@ export function recordCommandError({
   error,
   instanceType = 'principal'
 } = {}) {
-  // Errores de uso o validación no son fallos internos y no deben llenar
-  // el historial de reportes.
   if (isExpectedCommandError(error)) return ''
 
   return rememberError({
@@ -70,26 +101,25 @@ export function recordCommandError({
   })
 }
 
-export function commandErrorMessage(code = '', error = null) {
+export function commandErrorMessage(_code = '', error = null) {
   const message = cleanMessage(error)
 
   if (isExpectedCommandError(error)) {
     return `❌ ${message}`
   }
 
-  // Los errores que vienen de una API ya están normalizados en api.js.
-  // Mostramos su mensaje real sin exponer stack, payload ni secretos.
-  if (isApiError(error) && message) {
+  if (isApiError(error)) {
     return [
-      `❌ ${message}`,
-      code ? `🧾 Código: *${code}*` : '',
-      code ? '> Si persiste usa *.reportar* para enviarlo al equipo.' : ''
-    ].filter(Boolean).join('\n')
+      `❌ ${apiFriendlyMessage(error)}`,
+      '',
+      '> Intenta nuevamente. Si el problema continúa, usa *.soporte*.'
+    ].join('\n')
   }
 
   return [
-    '❌ No se pudo completar el comando por un error interno.',
-    code ? `🧾 Código: *${code}*` : '',
-    code ? '> Usa *.reportar* o *.soporte* si vuelve a ocurrir.' : ''
-  ].filter(Boolean).join('\n')
+    '❌ No se pudo completar el comando.',
+    '',
+    'El proceso encontró un error temporal.',
+    '> Intenta nuevamente. Si vuelve a ocurrir, usa *.soporte*.'
+  ].join('\n')
 }

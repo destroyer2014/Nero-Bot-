@@ -28,6 +28,11 @@ import { checkCommandRate, rateLimitMessage } from './lib/commandGuard.js'
 import { createInstanceHeartbeat } from './lib/instanceHeartbeat.js'
 import { hasPendingSubbotPhone, clearPendingSubbotPhone } from './lib/pendingSubbotPhone.js'
 import { createSubbotForPhone } from './commands/subbots.js'
+import {
+  restoreRegisteredSubbots,
+  shutdownSubbotProcesses,
+  subbotProcessManagerMode
+} from './lib/subbotManager.js'
 import { getCachedPhoneForLid, setCachedPhoneForLid } from './lib/lidCache.js'
 import {
   shouldHandleGroup,
@@ -655,8 +660,55 @@ async function startNeroBot() {
   return sock
 }
 
-process.on('uncaughtException', error => console.error('Error no controlado:', error))
-process.on('unhandledRejection', error => console.error('Promesa rechazada:', error))
+process.on('uncaughtException', error =>
+  console.error('Error no controlado:', error)
+)
+
+process.on('unhandledRejection', error =>
+  console.error('Promesa rechazada:', error)
+)
+
+let stoppingForPanel = false
+
+async function stopPanelChildren(signal) {
+  if (stoppingForPanel) return
+  if (subbotProcessManagerMode() !== 'child') return
+
+  stoppingForPanel = true
+  console.log(`[PANEL] ${signal}: cerrando SubBots hijos...`)
+
+  await shutdownSubbotProcesses().catch(error =>
+    console.warn(
+      '[PANEL] Error cerrando SubBots:',
+      error?.message || error
+    )
+  )
+
+  process.exit(0)
+}
+
+process.once('SIGTERM', () => {
+  stopPanelChildren('SIGTERM').catch(() => process.exit(0))
+})
+
+process.once('SIGINT', () => {
+  stopPanelChildren('SIGINT').catch(() => process.exit(0))
+})
+
+restoreRegisteredSubbots()
+  .then(result => {
+    console.log(
+      `[SUBBOT RESTORE] gestor=${result.manager} ` +
+      `restaurados=${result.restored.length} ` +
+      `omitidos=${result.skipped.length}`
+    )
+  })
+  .catch(error =>
+    console.warn(
+      '[SUBBOT RESTORE]',
+      error?.message || error
+    )
+  )
 
 startNeroBot().catch(error => {
   console.error('No se pudo iniciar Nero Bot:', error)

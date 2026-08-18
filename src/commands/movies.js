@@ -3,6 +3,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { spawn } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
+import { createRequire } from 'node:module'
 import config from '../../config.js'
 import { apiGet } from '../lib/api.js'
 import {
@@ -30,6 +31,11 @@ import {
 } from '../lib/premiumStore.js'
 
 const NERO_CREDIT = 'Nero AI™ | ©ArcadiaCorps'
+const require = createRequire(import.meta.url)
+let BUNDLED_7ZIP = ''
+try {
+  BUNDLED_7ZIP = require('7zip-bin-full')?.path7z || ''
+} catch {}
 const MOVIE_LIMIT = 10
 
 const MOVIE_SINGLE_DOCUMENT_BYTES = Math.max(
@@ -41,6 +47,65 @@ const MOVIE_SPLIT_PART_BYTES = Math.max(
   100,
   Number(process.env.MOVIE_SPLIT_PART_MB || 700)
 ) * 1024 * 1024
+
+const MOVIE_TRANSIENT_STATUSES = new Set([
+  429, 500, 502, 503, 504
+])
+
+const movieWait = ms =>
+  new Promise(resolve => setTimeout(resolve, ms))
+
+async function movieApiGet(endpoint, params = {}, options = {}) {
+  const attempts = Math.max(1, Number(options.attempts || 3))
+  let lastError
+
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      return await apiGet(
+        endpoint,
+        params,
+        { timeoutMs: options.timeoutMs || 180000 }
+      )
+    } catch (error) {
+      lastError = error
+      const status = Number(error?.status || 0)
+
+      if (
+        !MOVIE_TRANSIENT_STATUSES.has(status) ||
+        attempt >= attempts
+      ) {
+        throw error
+      }
+
+      await movieWait(Math.min(7000, 1200 * attempt * attempt))
+    }
+  }
+
+  throw lastError || new Error(
+    'El servidor de películas no respondió.'
+  )
+}
+
+async function movieSearchData(query) {
+  try {
+    return await movieApiGet(
+      '/movies',
+      {
+        q: query,
+        limit: MOVIE_LIMIT
+      },
+      {
+        timeoutMs: 120000,
+        attempts: 3
+      }
+    )
+  } catch (error) {
+    if (Number(error?.status || 0) === 404) {
+      return { results: [] }
+    }
+    throw error
+  }
+}
 
 const MOVIE_CATALOGS = {
   estrenos: {
@@ -157,14 +222,7 @@ export const peliculaCatalogCommand = {
     }
 
     const query = movieCatalogQuery(category)
-    const data = await apiGet(
-      '/movies',
-      {
-        q: query,
-        limit: MOVIE_LIMIT
-      },
-      { timeoutMs: 120000 }
-    )
+    const data = await movieSearchData(query)
 
     await sendMovieSearch(ctx, category.title, data)
   }
@@ -328,7 +386,15 @@ async function extractMovieArchive(archiveFile, targetDir, password = '') {
   await fs.mkdir(targetDir, { recursive: true })
 
   const passwordArg = password ? `-p${password}` : null
-  const tools = ['7zz', '7z']
+  if (BUNDLED_7ZIP) {
+    await fs.chmod(BUNDLED_7ZIP, 0o755).catch(() => {})
+  }
+
+  const tools = [
+    BUNDLED_7ZIP,
+    '7zz',
+    '7z'
+  ].filter(Boolean)
   let missing = 0
   let lastError = null
 
@@ -356,7 +422,7 @@ async function extractMovieArchive(archiveFile, targetDir, password = '') {
 
   if (missing === tools.length) {
     throw new Error(
-      'Nero necesita 7-Zip en el VPS para extraer esta película en RAR.'
+      'Nero no encontró un ejecutable 7-Zip disponible para extraer esta película.'
     )
   }
 
@@ -412,63 +478,94 @@ async function findExtractedVideo(dir) {
 }
 
 async function resolveMovieDownload(slug) {
-  const first = await apiGet(
-    '/peliculas/mediafire',
-    { slug },
-    { timeoutMs: 240000 }
-  )
+  let first
 
-  const sources = movieSources(first)
-  const source =
-    sources.find(item => item?.verified === true) ||
-    sources[0] ||
-    null
+  try {
+    first = await movieApiGet(
+      '/peliculas/mediafire',
+      { slug },
+      { timeoutMs: 240000, attempts: 3 }
+    )
+  } catch (error) {
+    const status = Number(error?.status || 0)
 
-  if (source?.url) {
-    const resolved = /mediafire\.com/i.test(source.url)
-      ? await apiGet(
-          '/mediafire',
-          { mode: 'link', url: source.url },
-          { timeoutMs: 240000 }
-        )
-      : source
-
-    const direct = pickDownloadUrl(resolved)
-
-    if (!direct) {
+    if ([400, 404, 422].includes(status)) {
       throw new Error(
-        'No encontré un archivo descargable para esa película.'
+        `No encontré una fuente de descarga disponible para "${titleFromSlug(slug)}".`
       )
     }
 
-    return {
-      url: direct,
-      metadata: resolved,
-      source,
-      archive: isArchiveSource(source),
-      format: sourceFormat(source),
-      fileName: sourceFileName(source),
-      password: String(source.password || '')
+    throw error
+  }
+
+  const sources = movieSources(first)
+    .sort((a, b) =>
+      Number(Boolean(b?.verified)) -
+      Number(Boolean(a?.verified))
+    )
+
+  let lastError = null
+
+  for (const source of sources.slice(0, 8)) {
+    if (!source?.url) continue
+
+    try {
+      const resolved = /mediafire\.com/i.test(source.url)
+        ? await movieApiGet(
+            '/mediafire',
+            { mode: 'link', url: source.url },
+            { timeoutMs: 240000, attempts: 3 }
+          )
+        : source
+
+      const direct = pickDownloadUrl(resolved)
+
+      if (!direct) continue
+
+      return {
+        url: direct,
+        metadata: resolved,
+        source,
+        archive: isArchiveSource(source),
+        format: sourceFormat(source),
+        fileName: sourceFileName(source),
+        password: String(source.password || '')
+      }
+    } catch (error) {
+      lastError = error
+      console.warn(
+        '[MOVIE] fuente descartada:',
+        source?.url,
+        error?.message || error
+      )
     }
   }
 
   const direct = pickDownloadUrl(first)
 
-  if (!direct) {
+  if (direct) {
+    return {
+      url: direct,
+      metadata: first,
+      source: {},
+      archive: false,
+      format: '',
+      fileName: '',
+      password: ''
+    }
+  }
+
+  const status = Number(lastError?.status || 0)
+
+  if (MOVIE_TRANSIENT_STATUSES.has(status)) {
     throw new Error(
-      'No encontré un archivo descargable para esa película.'
+      'El servidor de películas está temporalmente ocupado. Intenta nuevamente en unos minutos.'
     )
   }
 
-  return {
-    url: direct,
-    metadata: first,
-    source: {},
-    archive: false,
-    format: '',
-    fileName: '',
-    password: ''
-  }
+  throw new Error(
+    `No encontré un archivo descargable para "${titleFromSlug(slug)}". Prueba con otro resultado.`
+  )
 }
 
 async function sendMovieArchive(ctx, resolved, title) {
@@ -614,14 +711,7 @@ export const peliculaCommand = {
       return
     }
 
-    const data = await apiGet(
-      '/movies',
-      {
-        q: query,
-        limit: MOVIE_LIMIT
-      },
-      { timeoutMs: 120000 }
-    )
+    const data = await movieSearchData(query)
 
     await sendMovieSearch(ctx, query, data)
   }

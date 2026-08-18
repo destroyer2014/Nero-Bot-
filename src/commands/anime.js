@@ -18,6 +18,11 @@ const ANIME_SPLIT_PART_BYTES = Math.max(
   Number(process.env.ANIME_SPLIT_PART_MB || 700)
 ) * 1024 * 1024
 
+const ANIME_MAX_SOURCE_BYTES = Math.max(
+  1024,
+  Number(process.env.ANIME_MAX_SOURCE_MB || 4096)
+) * 1024 * 1024
+
 const animeCooldown = new Map()
 const animeActive = new Set()
 
@@ -55,6 +60,14 @@ function isTransientAnimeStatus(status) {
 
 function animeErrorMessage(error) {
   const status = Number(error?.status || 0)
+
+  if (status === 404) {
+    return 'No encontré ese anime o episodio. Puede que ya no esté disponible en el catálogo.'
+  }
+
+  if ([400, 422].includes(status)) {
+    return 'Ese anime o episodio no está disponible con la fuente actual. Intenta con otro resultado.'
+  }
 
   if ([500, 502, 503, 504].includes(status)) {
     return 'El servidor de anime está temporalmente ocupado. Intenta nuevamente en unos minutos.'
@@ -218,17 +231,30 @@ async function sendAnimeCatalog(ctx) {
 }
 
 async function sendAnimeSearch(ctx, query) {
-  const data = await animeApiRetry('search', {
-    q: query,
-    limit: ANIME_SEARCH_LIMIT
-  })
+  let data
+
+  try {
+    data = await animeApiRetry('search', {
+      q: query,
+      limit: ANIME_SEARCH_LIMIT
+    })
+  } catch (error) {
+    if (Number(error?.status || 0) === 404) {
+      throw new Error(
+        `No encontré el anime "${query}". Prueba con otro nombre.`
+      )
+    }
+    throw error
+  }
 
   const list = (data.results || [])
     .filter(item => item?.slug)
     .slice(0, ANIME_SEARCH_LIMIT)
 
   if (!list.length) {
-    throw new Error(`No encontré el anime "${query}".`)
+    throw new Error(
+      `No encontré el anime "${query}". Prueba con otro nombre.`
+    )
   }
 
   const prefix = prefixOf(ctx)
@@ -260,8 +286,15 @@ async function sendAnimeSearch(ctx, query) {
         '▶️ Toca el botón para elegir qué deseas ver.'
       ].join('\n'),
       footer: NERO_CREDIT,
-      media: first?.thumbnail ? { image: { url: first.thumbnail } } : null,
-      buttons: [singleSelect('👀 Ver Opciones', rowSections(rows, '🌸 Resultados'))]
+      media: first?.thumbnail
+        ? { image: { url: first.thumbnail } }
+        : null,
+      buttons: [
+        singleSelect(
+          '👀 Ver Opciones',
+          rowSections(rows, '🌸 Resultados')
+        )
+      ]
     },
     ctx.msg
   )
@@ -354,7 +387,7 @@ async function sendAnimeDetail(ctx, slug, selectedTitle = '') {
 
     // Si DVYer rechaza el slug seleccionado, hacemos una sola
     // revalidación por título y usamos el slug exacto que vuelva a entregar.
-    if (status === 422 && selectedTitle) {
+    if ([400, 404, 422].includes(status) && selectedTitle) {
       const retrySearch = await animeApiRetry('search', {
         q: selectedTitle,
         limit: ANIME_SEARCH_LIMIT
@@ -556,13 +589,14 @@ export const animeEpisode = wrap(
       slug = String(cached.slug || '').trim()
       episode = Number(selectedEpisode?.episode || 0)
     } else {
-      // Compatibilidad temporal con botones antiguos.
       slug = cleanSlug(tokenOrSlug)
       episode = indexOrEpisode
     }
 
     if (!slug || !Number.isInteger(episode) || episode < 1) {
-      throw new Error('La selección del episodio venció. Abre nuevamente la lista.')
+      throw new Error(
+        'La selección del episodio venció. Abre nuevamente la lista.'
+      )
     }
 
     await runAnimeDownloadWithCooldown(ctx, async () => {
@@ -580,40 +614,78 @@ export const animeEpisode = wrap(
         { quoted: ctx.msg }
       ).catch(() => {})
 
-      const data = await animeApiRetry('episode', {
-        slug,
-        episode
-      }, { timeoutMs: 240000, attempts: 3 })
+      let lastError = null
 
-      const animeInfo = data.anime || {}
-      const result = data.result || {}
-      const url = result.download_url || result.stream_url
-      if (!url) throw new Error('La API no entregó el archivo del episodio.')
+      for (let cycle = 1; cycle <= 2; cycle += 1) {
+        const data = await animeApiRetry(
+          'episode',
+          { slug, episode },
+          { timeoutMs: 240000, attempts: 3 }
+        )
 
-      const title = cleanText(animeInfo.titulo) || slug
-      const episodeTitle = cleanText(result.title) || `${title} - Episodio ${episode}`
-      const filename = cleanText(result.filename) || `${title} - Episodio ${episode}.mp4`
+        const animeInfo = data.anime || {}
+        const result = data.result || {}
+        const url = result.download_url || result.stream_url
 
-      await sendLargeVideoAsDocuments(
-        ctx.sock,
-        ctx.chat,
-        {
-          url,
-          title: episodeTitle,
-          filename,
-          caption: [
-            `🌸 *${title}*`,
-            `📺 Episodio ${episode}`,
-            result.filesize ? `📦 ${result.filesize}` : '',
-            '',
-            `> ${NERO_CREDIT}`
-          ].filter(Boolean).join('\n'),
-          quoted: ctx.msg,
-          singleDocumentMaxBytes: ANIME_SINGLE_DOCUMENT_BYTES,
-          splitPartBytes: ANIME_SPLIT_PART_BYTES,
-          silent: true
+        if (!url) {
+          throw new Error(
+            'No encontré una fuente de descarga para ese episodio.'
+          )
         }
-      )
+
+        const title = cleanText(animeInfo.titulo) || slug
+        const episodeTitle =
+          cleanText(result.title) ||
+          `${title} - Episodio ${episode}`
+        const filename =
+          cleanText(result.filename) ||
+          `${title} - Episodio ${episode}.mp4`
+
+        try {
+          await sendLargeVideoAsDocuments(
+            ctx.sock,
+            ctx.chat,
+            {
+              url,
+              title: episodeTitle,
+              filename,
+              caption: [
+                `🌸 *${title}*`,
+                `📺 Episodio ${episode}`,
+                result.filesize ? `📦 ${result.filesize}` : '',
+                '',
+                `> ${NERO_CREDIT}`
+              ].filter(Boolean).join('\n'),
+              quoted: ctx.msg,
+              singleDocumentMaxBytes: ANIME_SINGLE_DOCUMENT_BYTES,
+              splitPartBytes: ANIME_SPLIT_PART_BYTES,
+              maxSourceBytes: ANIME_MAX_SOURCE_BYTES,
+              silent: true
+            }
+          )
+
+          lastError = null
+          break
+        } catch (error) {
+          lastError = error
+          const message = String(error?.message || '')
+
+          const refreshable =
+            /HTTP\s+(?:403|404|429|500|502|503|504)/i.test(message) ||
+            /tardó demasiado|fetch failed|ECONNRESET|ETIMEDOUT/i.test(message)
+
+          if (!refreshable || cycle >= 2) throw error
+
+          console.warn(
+            '[ANIME] renovando enlace del episodio:',
+            error?.message || error
+          )
+
+          await animeRetryWait(1800)
+        }
+      }
+
+      if (lastError) throw lastError
     })
 
     await ctx.sock.sendMessage(
