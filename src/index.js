@@ -110,12 +110,12 @@ async function deliverSubbotEvent(event) {
       text:
         '✅ *Ahora eres subbot de Nero.*\n' +
         `Cuenta: +${event.phone}\n` +
-        'La instancia quedó guardada y activa con PM2.'
+        'La instancia quedó guardada y activa.'
     })
   } else if (event.type === 'deleted') {
     await sock.sendMessage(event.chat, {
       text:
-        `🗑️ La sesión del subbot +${event.phone} fue eliminada del VPS.\n` +
+        `🗑️ La sesión del subbot +${event.phone} fue eliminada del servidor.\n` +
         `Motivo: ${event.reason || 'sesión cerrada'}`
     })
   } else if (event.type === 'pairing-paused') {
@@ -125,7 +125,7 @@ async function deliverSubbotEvent(event) {
         `WhatsApp cerró temporalmente la conexión${
           event.statusCode ? ` (HTTP ${event.statusCode})` : ''
         }.\n` +
-        'La sesión incompleta *NO fue eliminada del VPS* y Nero no solicitará códigos en bucle.\n\n' +
+        'La sesión incompleta *NO fue eliminada del servidor* y Nero no solicitará códigos en bucle.\n\n' +
         'Espera el cooldown y vuelve a usar *.code* si el código anterior no vincula.'
     })
   } else {

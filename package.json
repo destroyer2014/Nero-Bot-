@@ -1,7 +1,7 @@
 {
   "name": "nero-bot",
-  "version": "1.18.6",
-  "description": "Nero Bot v1.18.6: Panel Edition, SubBots sin PM2 y 7-Zip integrado",
+  "version": "1.18.7",
+  "description": "Nero Bot v1.18.7: SubBots sin spam de grupos y sincronización con cooldown",
   "type": "module",
   "main": "src/index.js",
   "scripts": {

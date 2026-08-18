@@ -142,6 +142,16 @@ let lastAppliedProfile = {}
 let profileQueue = Promise.resolve()
 let lastProfileRequestAt = 0
 
+const GROUP_REFRESH_MIN_INTERVAL_MS = Math.max(
+  15000,
+  Number(process.env.SUBBOT_GROUP_REFRESH_MS || 60000)
+)
+
+let groupRefreshPromise = null
+let groupRefreshTimer = null
+let lastGroupRefreshAt = 0
+let lastLoggedGroupCount = null
+
 function isRateLimit(error) {
   return /rate[-_ ]?overlimit|too many requests|\b429\b/i.test(
     String(error?.message || error || '')
@@ -293,29 +303,101 @@ watchSubbotConfig(id, next => {
   prefix: config.prefix
 })
 
-async function refreshGroups(sock) {
-  try {
-    if (typeof sock.groupFetchAllParticipating !== 'function') {
-      throw new Error('La versión actual de Baileys no expone groupFetchAllParticipating.')
-    }
+async function refreshGroups(
+  sock,
+  {
+    force = false,
+    reason = 'sync'
+  } = {}
+) {
+  const cached = getSubbot(id)?.groups || []
+  const now = Date.now()
 
-    const groups = await sock.groupFetchAllParticipating()
-    const groupIds = Object.keys(groups || {})
-      .filter(groupId => groupId.endsWith('@g.us'))
-
-    upsertSubbot({
-      id,
-      phone,
-      groups: groupIds,
-      groupsUpdatedAt: Date.now()
-    })
-
-    console.log(`[SUBBOT GROUPS] ${id}: ${groupIds.length} grupos`)
-    return groupIds
-  } catch (error) {
-    console.warn('[SUBBOT GROUPS]', error?.message || error)
-    return getSubbot(id)?.groups || []
+  if (groupRefreshPromise) {
+    return groupRefreshPromise
   }
+
+  if (
+    !force &&
+    lastGroupRefreshAt &&
+    now - lastGroupRefreshAt < GROUP_REFRESH_MIN_INTERVAL_MS
+  ) {
+    return cached
+  }
+
+  groupRefreshPromise = (async () => {
+    try {
+      if (typeof sock.groupFetchAllParticipating !== 'function') {
+        throw new Error(
+          'La versión actual de Baileys no expone groupFetchAllParticipating.'
+        )
+      }
+
+      const groups = await sock.groupFetchAllParticipating()
+      const groupIds = Object.keys(groups || {})
+        .filter(groupId => groupId.endsWith('@g.us'))
+
+      lastGroupRefreshAt = Date.now()
+
+      upsertSubbot({
+        id,
+        phone,
+        groups: groupIds,
+        groupsUpdatedAt: lastGroupRefreshAt
+      })
+
+      if (
+        lastLoggedGroupCount === null ||
+        lastLoggedGroupCount !== groupIds.length ||
+        reason === 'open'
+      ) {
+        console.log(
+          `[SUBBOT GROUPS] ${id}: ${groupIds.length} grupos`
+        )
+        lastLoggedGroupCount = groupIds.length
+      }
+
+      return groupIds
+    } catch (error) {
+      lastGroupRefreshAt = Date.now()
+
+      if (isRateLimit(error)) {
+        console.warn(
+          `[SUBBOT GROUPS] ${id}: sincronización limitada por WhatsApp; usando caché.`
+        )
+      } else {
+        console.warn('[SUBBOT GROUPS]', error?.message || error)
+      }
+
+      return getSubbot(id)?.groups || []
+    } finally {
+      groupRefreshPromise = null
+    }
+  })()
+
+  return groupRefreshPromise
+}
+
+function scheduleGroupRefresh(sock) {
+  if (groupRefreshTimer) return
+
+  const elapsed = Date.now() - lastGroupRefreshAt
+  const delay = lastGroupRefreshAt
+    ? Math.max(
+        2500,
+        GROUP_REFRESH_MIN_INTERVAL_MS - elapsed
+      )
+    : 2500
+
+  groupRefreshTimer = setTimeout(() => {
+    groupRefreshTimer = null
+
+    refreshGroups(sock, {
+      reason: 'groups.update'
+    }).catch(() => {})
+  }, delay)
+
+  groupRefreshTimer.unref?.()
 }
 
 function rememberGroup(groupId) {
@@ -368,6 +450,11 @@ async function cleanup(reason = 'sesión cerrada') {
   if (cleaningUp) return
   cleaningUp = true
   instanceHeartbeat.stop()
+
+  if (groupRefreshTimer) {
+    clearTimeout(groupRefreshTimer)
+    groupRefreshTimer = null
+  }
 
   const entry = getSubbot(id)
 
@@ -427,7 +514,7 @@ async function start() {
   startGachaScheduler(sock)
 
   sock.ev.on('groups.update', () => {
-    refreshGroups(sock).catch(() => {})
+    scheduleGroupRefresh(sock)
   })
 
   sock.ev.on('connection.update', async update => {
@@ -451,13 +538,11 @@ async function start() {
         platform: 'Desconocido'
       })
 
-      await refreshGroups(sock)
+      await refreshGroups(sock, {
+        force: true,
+        reason: 'open'
+      })
       await applyWhatsAppProfile(sock, {}, runtimeConfig)
-
-      const delayedRefresh = setTimeout(() => {
-        refreshGroups(sock).catch(() => {})
-      }, 5000)
-      delayedRefresh.unref?.()
 
       const entry = getSubbot(id)
       if (needsPairing && !connectedNoticeSent && entry?.requestChat) {
