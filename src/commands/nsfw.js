@@ -1,6 +1,6 @@
 import { jidNormalizedUser } from '@itsliaaa/baileys'
 import config from '../../config.js'
-import { evoGet } from '../lib/api.js'
+import { evoGet, apiGet } from '../lib/api.js'
 import { getGroup, patchGroup } from '../lib/groupStore.js'
 import { sendInteractive, singleSelect } from '../lib/interactive.js'
 import { getSelection, saveSelection } from '../lib/selectionCache.js'
@@ -276,7 +276,7 @@ export const pornhubSearch = wrap('pornhubsearch', ['phsearch', 'ph'], async ctx
 export const xnxxSearch = wrap('xnxxsearch', ['xnsearch'], async ctx => {
   requireAdultEnabled(ctx)
   const query = assertAllowedInput(ctx.args.join(' '))
-  const data = await evoGet('/nsfw/search/xnxx', { query })
+  const data = await apiGet('/xnxx/search', { q: query })
   await sendAdultSelection(ctx, {
     query,
     provider: 'XNXX',
@@ -303,8 +303,41 @@ export const xnxxPick = wrap('xnxxpick', [], async ctx => {
   requireAdultEnabled(ctx)
   const list = getSelection(ctx.args[0], 'nsfw-xnxx')
   const item = list?.[Number(ctx.args[1])]
-  if (!item?.url) throw new Error('La selección venció. Ejecuta .xnxxsearch nuevamente.')
-  await xnxxDownload.execute({ ...ctx, args: [item.url] })
+  if (!item) throw new Error('La selección venció. Ejecuta .xnxxsearch nuevamente.')
+  
+  let videoUrl = null
+  let title = item.title
+
+  try {
+    // Si la API devuelve un "download_url", lo usamos para obtener el JSON final
+    if (item.download_url) {
+      let endpoint = item.download_url
+      if (endpoint.startsWith('http')) {
+        const parsed = new URL(endpoint)
+        endpoint = parsed.pathname + parsed.search
+      }
+      const dlData = await apiGet(endpoint)
+      const resultData = dlData.result || dlData.resultado || dlData
+      videoUrl = resultData.url_high || resultData.url_low || resultData.url
+      title = resultData.title || title
+    }
+  } catch (error) {
+    console.error('Error procesando download_url:', error?.message)
+  }
+
+  // Fallback por si no funcionó el primer paso
+  if (!videoUrl) {
+    videoUrl = item.url_high || item.url_low || extractMediaUrl(item) || item.url
+  }
+  
+  if (!videoUrl) throw new Error('No se encontró el enlace de descarga en este resultado.')
+  
+  const caption = [
+    '🔞 *XNXX*',
+    `Título: ${cleanText(title, 'Sin título')}`
+  ].filter(Boolean).join('\n')
+  
+  await sendMedia(ctx, videoUrl, 'video', caption)
 })
 
 export const xvideosPick = wrap('xvideospick', [], async ctx => {
@@ -337,20 +370,6 @@ export const xvideosDownload = wrap('xvideosdl', ['xvdl'], async ctx => {
     result.duration ? `Duración: ${cleanText(result.duration)}` : '',
     result.views !== undefined ? `Vistas: ${formatNumber(result.views)}` : '',
     result.likes !== undefined ? `Me gusta: ${formatNumber(result.likes)}` : ''
-  ].filter(Boolean).join('\n')
-  await sendMedia(ctx, url, 'video', caption)
-})
-
-export const xnxxDownload = wrap('xnxxdl', ['xndl'], async ctx => {
-  requireAdultEnabled(ctx)
-  const source = validateVideoPageUrl(ctx.args[0], ['xnxx.com'])
-  const data = await evoGet('/nsfw/dl/xnxx', { url: source }, { timeoutMs: 180_000 })
-  const result = data?.resultado?.result || data?.result || {}
-  const url = result?.download?.high || result?.download?.low || extractMediaUrl(result)
-  const caption = [
-    '🔞 *XNXX*',
-    `Título: ${cleanText(result.title, 'Sin título')}`,
-    result.quality && result.quality !== '-' ? `Calidad: ${cleanText(result.quality)}` : ''
   ].filter(Boolean).join('\n')
   await sendMedia(ctx, url, 'video', caption)
 })
@@ -392,10 +411,183 @@ export const randomAdult = wrap('rnd18', ['random18'], async ctx => {
   await sendMedia(ctx, url, kind, `🔞 Aleatorio • ${type}`)
 })
 
-export const hentaiVideo = wrap('hentaivideo', ['hentaivid'], async ctx => {
+export const hentaiSearch = wrap('hentaisearch', ['hentai'], async ctx => {
   requireAdultEnabled(ctx)
-  const data = await evoGet('/nsfw/video/hentai')
-  await sendMedia(ctx, extractMediaUrl(data), 'video', '🔞 Video animado para adultos')
+  const query = ctx.args.join(' ').trim()
+  
+  if (query && blockedTerms.some(pattern => pattern.test(query))) {
+    throw new Error('La solicitud fue bloqueada por seguridad: no se permite contenido con menores, abuso, falta de consentimiento, cámaras ocultas, explotación ni animales.')
+  }
+
+  // Si no hay búsqueda, usamos una sílaba aleatoria para traer resultados variados de toda la base de datos
+  let apiQuery = query
+  if (!query) {
+    const randomTerms = ['a','e','i','o','u','ka','ki','ku','ke','ko','sa','shi','su','se','so','ma','mi','mu','me','mo','na','ni','nu','ne','no','ra','ri','ru','re','ro','ha','hi','fu','he','ho','wa','ya','yu','yo']
+    apiQuery = randomTerms[Math.floor(Math.random() * randomTerms.length)]
+  }
+
+  const data = await apiGet('/hentai/search', { q: apiQuery })
+  let results = searchResults(data)
+  
+  if (!results.length && query) {
+    throw new Error('No se encontraron resultados para ese nombre. Escribe solo *.hentaisearch* para recibir resultados aleatorios (random) o verifica cómo escribiste el nombre.')
+  } else if (!results.length) {
+    throw new Error('No se encontraron resultados en este momento.')
+  }
+  
+  // Si fue aleatorio, mezclamos los resultados obtenidos para que no salgan en el mismo orden
+  if (!query) {
+    results = results.sort(() => 0.5 - Math.random())
+  }
+  
+  results = results.slice(0, 10)
+  
+  const token = saveSelection('nsfw-hentai', results)
+  const rows = results.map((item, index) => ({
+    header: `Resultado ${index + 1}`,
+    title: cleanText(item.title, 'Sin título').slice(0, 90),
+    description: 'Seleccionar para descargar video',
+    id: `${config.prefix}hentaipick ${token} ${index}`
+  }))
+  
+  const bodyText = query 
+    ? `Resultados para: *${query}*\nSelecciona un episodio para descargarlo.` 
+    : `🎲 *Resultados aleatorios*\nSelecciona un episodio para descargarlo.`
+  
+  await sendInteractive(ctx.sock, ctx.chat, {
+    title: 'Hentai Downloader',
+    body: bodyText,
+    buttons: [singleSelect('Ver episodios', [{ title: 'Hentai', rows }])]
+  }, ctx.msg)
+})
+
+export const hentaiPick = wrap('hentaipick', [], async ctx => {
+  requireAdultEnabled(ctx)
+  const list = getSelection(ctx.args[0], 'nsfw-hentai')
+  const item = list?.[Number(ctx.args[1])]
+  if (!item) throw new Error('La selección venció. Ejecuta .hentaisearch nuevamente.')
+  
+  let videoUrl = null
+
+  try {
+    // 1. Obtener la página del video
+    let endpoint = item.url
+    if (endpoint.startsWith('http')) {
+      const parsed = new URL(endpoint)
+      endpoint = parsed.pathname + parsed.search
+    }
+    const videoData = await apiGet(endpoint)
+    const resultData = videoData.result || videoData
+    
+    // 2. Extraer el link de mediafire
+    const downloadUrl = resultData.download_url
+    if (!downloadUrl) throw new Error('No se encontró enlace de descarga en la página del video.')
+    
+    // 3. Extraer el enlace directo de Mediafire usando la API
+    const mfData = await apiGet('/mediafire', { url: downloadUrl })
+    videoUrl = mfData.url || mfData.download_url || mfData.stream_url
+  } catch (error) {
+    console.error('Error procesando Hentai:', error?.message)
+  }
+
+  if (!videoUrl) throw new Error('No se pudo extraer el video desde los servidores.')
+  
+  const caption = [
+    '🔞 *Hentai*',
+    `Título: ${cleanText(item.title, 'Sin título')}`
+  ].filter(Boolean).join('\n')
+  
+  await sendMedia(ctx, videoUrl, 'video', caption)
+})
+
+export const nhentaiSearch = wrap('nhentaisearch', ['nhentai'], async ctx => {
+  requireAdultEnabled(ctx)
+  const query = ctx.args.join(' ').trim()
+  
+  if (query && blockedTerms.some(pattern => pattern.test(query))) {
+    throw new Error('La solicitud fue bloqueada por seguridad: no se permite contenido con menores, abuso, falta de consentimiento, cámaras ocultas, explotación ni animales.')
+  }
+
+  // Si no hay búsqueda, usamos un término aleatorio para variedad
+  let apiQuery = query
+  if (!query) {
+    const randomTerms = ['elf', 'maid', 'milf', 'succubus', 'sister', 'nurse', 'teacher', 'gyaru', 'a', 'e', 'i', 'o', 'u', 'yuri']
+    apiQuery = randomTerms[Math.floor(Math.random() * randomTerms.length)]
+  }
+
+  const data = await apiGet('/nhentai/search', { q: apiQuery })
+  let results = searchResults(data)
+  
+  if (!results.length && query) {
+    throw new Error('No se encontraron mangas para esa búsqueda. Escribe solo *.nhentaisearch* para resultados aleatorios o verifica el nombre.')
+  } else if (!results.length) {
+    throw new Error('No se encontraron mangas en este momento.')
+  }
+  
+  if (!query) {
+    results = results.sort(() => 0.5 - Math.random())
+  }
+  
+  results = results.slice(0, 10)
+  
+  const token = saveSelection('nsfw-nhentai', results)
+  const rows = results.map((item, index) => ({
+    header: `Resultado ${index + 1}`,
+    title: cleanText(item.title, 'Sin título').slice(0, 90),
+    description: `ID: ${item.id || 'N/A'} - Seleccionar para descargar PDF`,
+    id: `${config.prefix}nhentaipick ${token} ${index}`
+  }))
+  
+  const bodyText = query 
+    ? `Mangas encontrados para: *${query}*\nSelecciona uno para descargarlo en PDF.` 
+    : `🎲 *Mangas aleatorios*\nSelecciona uno para descargarlo en PDF.`
+  
+  await sendInteractive(ctx.sock, ctx.chat, {
+    title: 'nHentai Downloader',
+    body: bodyText,
+    buttons: [singleSelect('Ver mangas', [{ title: 'nHentai', rows }])]
+  }, ctx.msg)
+})
+
+export const nhentaiPick = wrap('nhentaipick', [], async ctx => {
+  requireAdultEnabled(ctx)
+  const list = getSelection(ctx.args[0], 'nsfw-nhentai')
+  const item = list?.[Number(ctx.args[1])]
+  if (!item) throw new Error('La selección venció. Ejecuta .nhentaisearch nuevamente.')
+  
+  let downloadUrl = item.download_url
+  
+  if (!downloadUrl) throw new Error('No se encontró enlace de descarga para este manga.')
+  
+  // Agregar la apikey y base si es una ruta relativa o ya está como http
+  if (downloadUrl.startsWith('http')) {
+    // Si ya trae apikey, lo usamos directo, si no le podríamos inyectar
+    if (!downloadUrl.includes('apikey=')) {
+      const apiKey = process.env.DVYER_API_KEY?.trim()
+      downloadUrl += `&apikey=${apiKey}`
+    }
+  } else {
+    const apiKey = process.env.DVYER_API_KEY?.trim()
+    downloadUrl = `${config.apiBaseUrl}${downloadUrl.startsWith('/') ? '' : '/'}${downloadUrl}&apikey=${apiKey}`
+  }
+
+  const caption = [
+    '🔞 *nHentai*',
+    `Título: ${cleanText(item.title, 'Sin título')}`,
+    `ID: ${item.id || 'Desconocido'}`
+  ].filter(Boolean).join('\n')
+  
+  try {
+    const { buffer } = await fetchMedia(downloadUrl)
+    await ctx.sock.sendMessage(ctx.chat, { 
+      document: buffer, 
+      mimetype: 'application/pdf', 
+      fileName: `nHentai_${item.id || 'Manga'}.pdf`,
+      caption 
+    }, { quoted: ctx.msg })
+  } catch (error) {
+    throw new Error('No se pudo descargar el PDF o pesa demasiado para enviarlo por WhatsApp.')
+  }
 })
 
 export const straightVideo = wrap('straight', ['straightvideo'], async ctx => {
@@ -433,12 +625,14 @@ export const nsfwCommands = [
   xnxxPick,
   xvideosPick,
   xvideosDownload,
-  xnxxDownload,
   rule34Image,
   rule34Video,
   danbooruAdult,
   randomAdult,
-  hentaiVideo,
+  hentaiSearch,
+  hentaiPick,
+  nhentaiSearch,
+  nhentaiPick,
   straightVideo,
   ...interactionTypes.map(makeInteraction)
 ]
