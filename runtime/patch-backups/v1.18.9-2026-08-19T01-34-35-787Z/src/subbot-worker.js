@@ -34,7 +34,6 @@ import {
   privateCommandsAllowed
 } from './lib/modeStore.js'
 import { moderateIncoming } from './lib/nsfwGuard.js'
-import { getGroup } from './lib/groupStore.js'
 import { getSubbotConfig, watchSubbotConfig } from './lib/subbotConfigStore.js'
 import { shouldHandleGroup } from './lib/instanceRouter.js'
 import { recordCommandError, commandErrorMessage } from './lib/commandErrors.js'
@@ -690,21 +689,10 @@ async function start() {
 
       const isAdd = ['add', 'invite', 'join'].includes(action)
       const isRemove = ['remove', 'leave'].includes(action)
-      if (!isAdd && !isRemove) return
-
-      const greetingRoute = await shouldHandleGroup({
-        sock,
-        groupId,
-        instanceType: 'subbot',
-        instanceId: id,
-        commandName: 'setbot'
-      })
-      if (!greetingRoute.handle) return
-
-      const settings = getGroup(groupId)
       if (
-        (isAdd && !settings.welcome) ||
-        (isRemove && !settings.goodbye)
+        (isAdd && !runtimeConfig.welcomeEnabled) ||
+        (isRemove && !runtimeConfig.goodbyeEnabled) ||
+        (!isAdd && !isRemove)
       ) return
 
       const metadata = await sock.groupMetadata(groupId).catch(() => null)
@@ -717,49 +705,18 @@ async function start() {
         if (!participant) continue
 
         const template = isAdd
-          ? settings.welcomeText
-          : settings.goodbyeText
+          ? runtimeConfig.welcomeText
+          : runtimeConfig.goodbyeText
 
         const text = String(template || '')
           .replaceAll('@user', `@${String(participant).split('@')[0]}`)
           .replaceAll('@group', metadata.subject || 'el grupo')
           .replaceAll('@members', String(metadata.participants?.length || 0))
-          .replaceAll(
-            '@date',
-            new Date().toLocaleDateString('es-PE', {
-              timeZone: config.timezone
-            })
-          )
-          .replaceAll(
-            '@time',
-            new Date().toLocaleTimeString('es-PE', {
-              timeZone: config.timezone,
-              hour: '2-digit',
-              minute: '2-digit'
-            })
-          )
 
-        const image = isAdd
-          ? settings.welcomeImage
-          : settings.goodbyeImage
-
-        if (image) {
-          let media = { url: image }
-          try {
-            media = await fs.readFile(image)
-          } catch {}
-
-          await sock.sendMessage(groupId, {
-            image: media,
-            caption: text,
-            mentions: [participant]
-          }).catch(() => {})
-        } else {
-          await sock.sendMessage(groupId, {
-            text,
-            mentions: [participant]
-          }).catch(() => {})
-        }
+        await sock.sendMessage(groupId, {
+          text,
+          mentions: [participant]
+        }).catch(() => {})
       }
     } catch (error) {
       console.warn('[SUBBOT WELCOME]', error?.message || error)

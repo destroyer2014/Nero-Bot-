@@ -494,15 +494,6 @@ async function startNeroBot() {
         instanceId: 'principal'
       })) return
 
-      const greetingRoute = await shouldHandleGroup({
-        sock,
-        groupId,
-        instanceType: 'principal',
-        instanceId: 'principal',
-        commandName: 'setbot'
-      })
-      if (!greetingRoute.handle) return
-
       const settings = getGroup(groupId)
       const isAdd = ['add','invite','join'].includes(action)
       const isRemove = ['remove','leave'].includes(action)

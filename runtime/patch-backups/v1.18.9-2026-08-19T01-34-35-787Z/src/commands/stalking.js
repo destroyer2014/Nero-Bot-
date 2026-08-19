@@ -354,7 +354,7 @@ export const tiktokStalk = wrap(
 
 export const freeFireStalk = wrap(
   'ffstalk',
-  ['ff', 'freefirestalk', 'ffprofile', 'freefireprofile'],
+  ['freefirestalk', 'ffprofile', 'freefireprofile'],
   async ctx => {
     const id = String(ctx.args?.[0] || '')
       .replace(/\D/g, '')
@@ -376,54 +376,14 @@ export const freeFireStalk = wrap(
       )
     }
 
-    const regions = [
-      region,
-      'us',
-      'br',
-      'sg',
-      'id',
-      'ind',
-      'latam'
-    ].filter((value, index, list) =>
-      value && list.indexOf(value) === index
+    const data = await apiGet(
+      '/freefire/profile',
+      { id, region },
+      { timeoutMs: 120_000 }
     )
-
-    let data = null
-    let resolvedRegion = region
-    let lastError = null
-
-    for (const candidate of regions) {
-      try {
-        const response = await apiGet(
-          '/freefire/profile',
-          { id, region: candidate },
-          { timeoutMs: 120_000 }
-        )
-
-        if (response?.result?.player_id) {
-          data = response
-          resolvedRegion = candidate
-          break
-        }
-      } catch (error) {
-        lastError = error
-        const status = Number(error?.status || 0)
-
-        if (![400, 404, 422].includes(status)) {
-          throw error
-        }
-      }
-    }
 
     const result = data?.result
     if (!result?.player_id) {
-      const status = Number(lastError?.status || 0)
-      if ([400, 404, 422].includes(status)) {
-        throw new Error(
-          'No encontré ese jugador de Free Fire. Verifica el ID o indica la región, por ejemplo: .ff 313665243 us'
-        )
-      }
-
       throw new Error(
         'No encontré un perfil público de Free Fire para ese ID.'
       )
@@ -434,7 +394,7 @@ export const freeFireStalk = wrap(
       '',
       `👤 Nick: *${clean(result.nick)}*`,
       `🆔 ID: *${clean(result.player_id)}*`,
-      `🌎 Región: *${resolvedRegion.toUpperCase()}*`,
+      `🌎 Región: *${region.toUpperCase()}*`,
       `⭐ Nivel: ${clean(result.level)}`,
       `❤️ Likes: ${clean(result.likes)}`,
       `✨ Experiencia: ${clean(result.experience)}`,
