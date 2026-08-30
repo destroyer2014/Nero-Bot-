@@ -31,6 +31,7 @@ import { serverCommand } from './server.js'
 import { gameCommands } from './games.js'
 import { movieCommands } from './movies.js'
 import { animeLatinoCommands } from './animelatino.js'
+import { movie2Commands } from './movies2.js'
 
 const commands = [
   menu,
@@ -40,6 +41,7 @@ const commands = [
   serverCommand,
   ...gameCommands,
   ...movieCommands,
+  ...movie2Commands,
   ...salesCommands,
   reportCommand,
   supportCommand,
