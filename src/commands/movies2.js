@@ -133,11 +133,31 @@ async function resolveStream(source, item) {
     } catch {}
   }
 
-  if (!m3u8 && source === 'rescue' && embed) {
-    try {
-      const stream = await get('rescue', '/embedstream', { url: embed, format: 'json' }, 180000)
-      m3u8 = pickM3u8(stream) || pickUrl(stream, /stream|playlist|m3u/i)
-    } catch {}
+  // Fallback: Rescue puede resolver embeds provenientes de PelisPlus/LaMovie.
+  // La versión anterior solo intentaba Rescue cuando la fuente ya era "rescue",
+  // por lo que un resultado de PelisPlus con embed terminaba en "no encontré stream".
+  if (!m3u8 && embed) {
+    const rescueAttempts = [
+      ['/embedstream', { url: embed, format: 'json' }],
+      ['/streamurl', { embed_url: embed }],
+      ['/streamurl', { url: embed }]
+    ]
+
+    for (const [endpoint, params] of rescueAttempts) {
+      try {
+        const stream = await get('rescue', endpoint, params, 180000)
+        m3u8 = pickM3u8(stream) || pickUrl(stream, /stream|playlist|m3u/i)
+        if (m3u8) break
+        const rescuedEmbed = pickEmbed(stream)
+        if (rescuedEmbed && rescuedEmbed !== embed) {
+          try {
+            const nested = await get('rescue', '/embedstream', { url: rescuedEmbed, format: 'json' }, 180000)
+            m3u8 = pickM3u8(nested) || pickUrl(nested, /stream|playlist|m3u/i)
+            if (m3u8) break
+          } catch {}
+        }
+      } catch {}
+    }
   }
 
   if (m3u8) return { kind: 'hls', url: m3u8, detail, embed }
